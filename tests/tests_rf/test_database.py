@@ -269,3 +269,27 @@ class TestMessageIndex:
         assert not db_path.exists()
 
         msg_db.stop()
+
+    async def test_hollow_index_safety(self) -> None:
+        """Test that querying a dtm present in SQL but missing from RAM is handled safely."""
+        msg_db = MessageIndex()
+
+        # 1. Add a message and ensure it is persisted to SQL
+        msg_db.add(self.msg1)
+        msg_db.flush()
+
+        # 2. Manually corrupt the RAM cache (simulate a 'Hollow Index')
+        dtm_str = self.msg1.dtm.isoformat(timespec="microseconds")
+        if dtm_str in msg_db._msgs:
+            del msg_db._msgs[dtm_str]
+
+        # 3. Attempt to retrieve the message
+        # _select_from should log a debug message and return an empty tuple instead of crashing
+        result = msg_db.get(hdr=self.msg1._pkt._hdr)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 0
+
+        msg_db.stop()
+
+    # tests/tests_rf/test_database.py
