@@ -23,6 +23,7 @@ class PacketLogEntry(NamedTuple):
     ctx: str | None
     hdr: str
     plk: str
+    blob: str  # The raw packet frame for reconstruction
 
 
 class PruneRequest(NamedTuple):
@@ -90,7 +91,8 @@ class StorageWorker:
                 code   TEXT(4)  NOT NULL,
                 ctx    TEXT,
                 hdr    TEXT     NOT NULL UNIQUE,
-                plk    TEXT     NOT NULL
+                plk    TEXT     NOT NULL,
+                blob   TEXT     NOT NULL
             )
             """
         )
@@ -163,8 +165,8 @@ class StorageWorker:
                         conn.executemany(
                             """
                             INSERT OR REPLACE INTO messages
-                            (dtm, verb, src, dst, code, ctx, hdr, plk)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            (dtm, verb, src, dst, code, ctx, hdr, plk, blob)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             batch,
                         )

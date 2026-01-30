@@ -3,6 +3,7 @@
 
 import contextlib
 from datetime import datetime as dt, timedelta as td
+from pathlib import Path
 
 from ramses_rf.database import MessageIndex
 from ramses_tx import Message, Packet
@@ -219,3 +220,52 @@ class TestMessageIndex:
         # assert len(msg_db.all()) == 5
 
         msg_db.stop()  # close sqlite3 connection
+
+    async def test_persistence(self, tmp_path: Path) -> None:
+        """Test database hydration and snapshotting."""
+        db_path = tmp_path / "test_rf.db"
+        msg_db = MessageIndex(store=str(db_path))
+
+        # 1. Add messages
+        msg_db.add(self.msg1)
+        msg_db.add(self.msg2)
+        msg_db.flush()  # Ensure write to SQLite before snapshot
+
+        assert len(msg_db.all()) == 1  # msg2 replaces msg1 (same code/hdr)
+
+        # 2. Force snapshot (usually happens in loop or on stop)
+        msg_db._save_db()
+        msg_db.stop()
+
+        assert db_path.is_file()
+        assert db_path.stat().st_size > 0
+
+        # 3. Rehydrate (Start new DB from same file)
+        new_db = MessageIndex(store=str(db_path))
+
+        # Check in-memory dict matches persistent state
+        assert len(new_db.all()) == 1
+        assert new_db.contains(code="1298")
+
+        new_db.stop()
+
+    async def test_lifecycle_clr(self, tmp_path: Path) -> None:
+        """Test that clr() removes the persistent store."""
+        db_path = tmp_path / "test_rf_clr.db"
+        msg_db = MessageIndex(store=str(db_path))
+
+        msg_db.add(self.msg1)
+        msg_db.flush()
+        msg_db._save_db()
+
+        assert db_path.is_file()
+
+        # Execute Clean Slate
+        msg_db.clr()
+
+        # Check memory
+        assert len(msg_db.all()) == 0
+        # Check disk - should be deleted
+        assert not db_path.exists()
+
+        msg_db.stop()

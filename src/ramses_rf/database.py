@@ -27,6 +27,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 import sqlite3
 import uuid
 from collections import OrderedDict
@@ -42,6 +43,11 @@ if TYPE_CHECKING:
     MsgDdT = OrderedDict[DtmStrT, Message]
 
 _LOGGER = logging.getLogger(__name__)
+
+# Regex to find the start of the packet frame (RSSI or Verb)
+# Matches optional RSSI (000-100 or ... or ..) followed by Verb (I|RQ|RP|W)
+# Handles variable spaces.
+_FRAME_START_RE = re.compile(r"(?:[0-9]{3}|\.{2,3})\s+(I|RQ|RP|W)\s+")
 
 
 def _setup_db_adapters() -> None:
@@ -94,10 +100,18 @@ class MessageIndex:
 
     _housekeeping_task: asyncio.Task[None]
 
-    def __init__(self, maintain: bool = True, db_path: str = ":memory:") -> None:
-        """Instantiate a message database/index."""
+    def __init__(
+        self, maintain: bool = True, db_path: str = ":memory:", store: str | None = None
+    ) -> None:
+        """Instantiate a message database/index.
+
+        :param maintain: if True, start housekeeping loop
+        :param db_path: path to the in-memory database (or shared memory URI)
+        :param store: path to the persistent file for hydration/snapshots
+        """
 
         self.maintain = maintain
+        self.store = store
         self._msgs: MsgDdT = OrderedDict()  # stores all messages for retrieval.
         # Filled & cleaned up in housekeeping_loop.
 
@@ -117,7 +131,7 @@ class MessageIndex:
             _LOGGER.error("MessageIndex: StorageWorker timed out initializing database")
 
         # Connect to a SQLite DB (Read Connection)
-        self._cx = sqlite3.connect(
+        self._cx: sqlite3.Connection | None = sqlite3.connect(
             db_path,
             detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
             check_same_thread=False,
@@ -140,6 +154,10 @@ class MessageIndex:
         self._cu = self._cx.cursor()  # Create a cursor
 
         _setup_db_adapters()  # DTM adapter/converter
+
+        # Hydrate from persistent store if available
+        if self.store:
+            self._load_db()
 
         # Schema creation is now handled safely by the StorageWorker to avoid races.
         # self._setup_db_schema()
@@ -175,9 +193,20 @@ class MessageIndex:
         ):
             self._housekeeping_task.cancel()  # stop the housekeeper
 
+        if self.store:  # Snapshot state on exit
+            self._save_db()
+
         self._worker.stop()  # Stop the background thread
-        self._cx.commit()  # just in case
-        self._cx.close()  # may still need to do queries after engine has stopped?
+
+        # Close the connection idempotently
+        if self._cx:
+            try:
+                self._cx.commit()  # just in case
+                self._cx.close()  # may still need to do queries after engine has stopped?
+            except sqlite3.ProgrammingError:
+                pass  # Already closed
+            finally:
+                self._cx = None
 
     @property
     def msgs(self) -> MsgDdT:
@@ -191,45 +220,53 @@ class MessageIndex:
         """
         self._worker.flush()
 
-    def _setup_db_schema(self) -> None:
-        """Set up the message database schema.
+    def _load_db(self) -> None:
+        """Hydrate the in-memory database from the persistent store."""
+        if not self.store or not os.path.isfile(self.store):
+            return
 
-        .. note::
-            messages TABLE Fields:
+        if not self._cx:
+            return
 
-            - dtm  message timestamp
-            - verb " I", "RQ" etc.
-            - src  message origin address
-            - dst  message destination address
-            - code packet code aka command class e.g. 0005, 31DA
-            - ctx  message context, created from payload as index + extra markers (Heat)
-            - hdr  packet header e.g. 000C|RP|01:223036|0208 (see: src/ramses_tx/frame.py)
-            - plk the keys stored in the parsed payload, separated by the | char
-        """
+        _LOGGER.debug(f"MessageIndex: Hydrating from {self.store}...")
+        try:
+            # We copy FROM disk TO memory
+            with sqlite3.connect(self.store) as src:
+                src.backup(self._cx)
 
-        self._cu.execute(
-            """
-            CREATE TABLE messages (
-                dtm    DTM      NOT NULL PRIMARY KEY,
-                verb   TEXT(2)  NOT NULL,
-                src    TEXT(12) NOT NULL,
-                dst    TEXT(12) NOT NULL,
-                code   TEXT(4)  NOT NULL,
-                ctx    TEXT,
-                hdr    TEXT     NOT NULL UNIQUE,
-                plk    TEXT     NOT NULL
+            # Re-populate in-memory dict from the loaded SQLite data
+            _LOGGER.debug("MessageIndex: Populating memory from snapshot...")
+            self._cu.execute("SELECT dtm, blob FROM messages")
+            for row in self._cu.fetchall():
+                try:
+                    dtm, blob = row
+                    if blob:
+                        pkt = Packet(dtm, blob)
+                        msg = Message._from_pkt(pkt)
+                        dtm_str = dtm.isoformat(timespec="microseconds")
+                        self._msgs[dtm_str] = msg
+                except (ValueError, TypeError, IndexError) as err:
+                    _LOGGER.warning(f"MessageIndex: Failed to rehydrate message: {err}")
+
+        except sqlite3.Error as err:
+            _LOGGER.warning(
+                f"MessageIndex: Failed to load database from {self.store}: {err}"
             )
-            """
-        )
 
-        self._cu.execute("CREATE INDEX idx_verb ON messages (verb)")
-        self._cu.execute("CREATE INDEX idx_src ON messages (src)")
-        self._cu.execute("CREATE INDEX idx_dst ON messages (dst)")
-        self._cu.execute("CREATE INDEX idx_code ON messages (code)")
-        self._cu.execute("CREATE INDEX idx_ctx ON messages (ctx)")
-        self._cu.execute("CREATE INDEX idx_hdr ON messages (hdr)")
+    def _save_db(self) -> None:
+        """Snapshot the in-memory database to the persistent store."""
+        if not self.store or not self._cx:
+            return
 
-        self._cx.commit()
+        _LOGGER.debug(f"MessageIndex: Snapshotting to {self.store}...")
+        try:
+            # We copy FROM memory TO disk
+            with sqlite3.connect(self.store) as dst:
+                self._cx.backup(dst)
+        except sqlite3.Error as err:
+            _LOGGER.warning(
+                f"MessageIndex: Failed to save database to {self.store}: {err}"
+            )
 
     async def _housekeeping_loop(self) -> None:
         """Periodically remove stale messages from the index,
@@ -269,6 +306,15 @@ class MessageIndex:
         while True:
             self._last_housekeeping = dt.now()
             await asyncio.sleep(3600)
+
+            if self.store:  # Snapshot to disk (Blocking I/O offloaded to executor)
+                try:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, self._save_db
+                    )
+                except Exception as err:
+                    _LOGGER.error("MessageIndex: Snapshot failed: %s", err)
+
             _LOGGER.info("Starting next MessageIndex housekeeping")
             await housekeeping(self._last_housekeeping)
 
@@ -328,7 +374,7 @@ class MessageIndex:
         return old
 
     def add_record(
-        self, src: str, code: str = "", verb: str = "", payload: str = "00"
+        self, src: str, code: str = "", verb: str = " I", payload: str = "00"
     ) -> None:
         """
         Add a single record to the MessageIndex with timestamp `now()` and no Message contents.
@@ -343,6 +389,11 @@ class MessageIndex:
         dtm: DtmStrT = _now.isoformat(timespec="microseconds")  # type: ignore[assignment]
         hdr = f"{code}|{verb}|{src}|{payload}"
 
+        # Calculate length based on payload string length (2 chars = 1 byte)
+        len_val = len(payload) // 2
+        # Construct the dummy frame for the blob using correct length format (3 chars)
+        blob = f"... {verb} --- {src} --:------ {src} {code} {len_val:03d} {payload}"
+
         # dup = self._delete_from(hdr=hdr)
         # Avoid blocking read; worker handles REPLACE on unique constraint collision
 
@@ -356,6 +407,7 @@ class MessageIndex:
             ctx=None,
             hdr=hdr,
             plk="|",
+            blob=blob,
         )
 
         self._worker.submit_packet(data)
@@ -366,9 +418,8 @@ class MessageIndex:
             self.flush()
 
         # also add dummy 3220 msg to self._msgs dict to allow maintenance loop
-        msg: Message = Message._from_pkt(
-            Packet(_now, f"... {verb} --- {src} --:------ {src} {code} 005 0000000000")
-        )
+        # Note: Packet constructor requires full line or we rely on default behavior
+        msg: Message = Message._from_pkt(Packet(_now, blob))
         self._msgs[dtm] = msg
 
         # if dup:  # expected when more than one heat system in schema
@@ -392,6 +443,26 @@ class MessageIndex:
         # _old_msgs = self._delete_from(hdr=msg._pkt._hdr)
         # Refactor: Worker uses INSERT OR REPLACE to handle collision
 
+        # Use _frame (raw string sans RSSI) if available, otherwise reconstruct/fallback
+        # This preserves exact spacing and address order from the source
+        if hasattr(msg._pkt, "_frame") and msg._pkt._frame:
+            # _frame usually looks like " I --- 01:123456 ..." (missing RSSI)
+            # It might have leading spaces. We strip them to ensure standard format.
+            clean_frame = msg._pkt._frame.lstrip()
+            # We prepend a default RSSI to make it a valid full frame
+            blob = f"... {clean_frame}"
+        else:
+            # Fallback: remove timestamp from str representation if present
+            # Robustly find the start of the frame (RSSI or Verb) using regex
+            full_str = str(msg._pkt)
+            match = _FRAME_START_RE.search(full_str)
+            if match:
+                blob = full_str[match.start() :]
+            else:
+                # Last resort: assume standard format and split if enough parts
+                parts = full_str.split(maxsplit=2)
+                blob = parts[2] if len(parts) >= 3 else full_str
+
         data = PacketLogEntry(
             dtm=msg.dtm,
             verb=str(msg.verb),
@@ -401,6 +472,7 @@ class MessageIndex:
             ctx=msg_pkt_ctx,
             hdr=msg._pkt._hdr,
             plk=payload_keys(msg.payload),
+            blob=blob,
         )
 
         self._worker.submit_packet(data)
@@ -440,7 +512,8 @@ class MessageIndex:
             msgs = self._delete_from(**kwargs)
 
         except sqlite3.Error:  # need to tighten?
-            self._cx.rollback()
+            if self._cx:
+                self._cx.rollback()
 
         else:
             for msg in msgs:
@@ -637,10 +710,18 @@ class MessageIndex:
     def clr(self) -> None:
         """Clear the message index (remove indexes of all messages)."""
 
+        if not self._cx:
+            return
+
         self._cu.execute("DELETE FROM messages")
         self._cx.commit()
 
         self._msgs.clear()
+
+        # If we have a persistent store, wipe it too (Clean Slate)
+        if self.store and os.path.isfile(self.store):
+            with contextlib.suppress(OSError):
+                os.remove(self.store)
 
     # def _msgs(self, device_id: DeviceIdT) -> tuple[Message, ...]:
     #     msgs = [msg for msg in self._msgs.values() if msg.src.id == device_id]
