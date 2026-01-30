@@ -259,13 +259,14 @@ class Gateway(Engine):
         ):
             initiate_discovery(self.devices, self.systems)
 
-    def create_sqlite_message_index(self) -> None:
+    def create_sqlite_message_index(self, store: str | None = None) -> None:
         """Initialize the SQLite MessageIndex.
 
+        :param store: path to a persistent file for snapshots/hydration
         :returns: None
         :rtype: None
         """
-        self.msg_db = MessageIndex()  # start the index
+        self.msg_db = MessageIndex(store=store)  # start the index
 
     async def stop(self) -> None:
         """Stop the Gateway and tidy up.
@@ -356,7 +357,7 @@ class Gateway(Engine):
 
         if self.msg_db:
             pkts = {
-                f"{repr(msg._pkt)[:26]}": f"{repr(msg._pkt)[27:]}"
+                f"{str(msg._pkt)[:26]}": f"{str(msg._pkt)[27:]}"
                 for msg in self.msg_db.all(include_expired=True)
                 if wanted_msg(msg, include_expired=include_expired)
             }
@@ -370,7 +371,7 @@ class Gateway(Engine):
                 # Related to/Fixes ramses_cc Issue 249 non-existing via-device _HW ?
 
             pkts = {  # BUG: assumes pkts have unique dtms: may be untrue for contrived logs
-                f"{repr(msg._pkt)[:26]}": f"{repr(msg._pkt)[27:]}"
+                f"{str(msg._pkt)[:26]}": f"{str(msg._pkt)[27:]}"
                 for msg in msgs
                 if wanted_msg(msg, include_expired=include_expired)
             }
@@ -445,6 +446,11 @@ class Gateway(Engine):
         )
 
         await tmp_transport.get_extra_info(SZ_READER_TASK)
+
+        # Ensure all restored packets are flushed to the database (if present)
+        # This is critical for tests that inspect state immediately after restoration
+        if self.msg_db:
+            self.msg_db.flush()
 
         _LOGGER.debug("Gateway: Restored, resuming")
         await self._resume()
