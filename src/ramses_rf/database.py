@@ -268,46 +268,41 @@ class MessageIndex:
                 f"MessageIndex: Failed to save database to {self.store}: {err}"
             )
 
+    # src/ramses_rf/database.py
+
     async def _housekeeping_loop(self) -> None:
-        """Periodically remove stale messages from the index,
-        unless `self.maintain` is False - as in (most) tests."""
+        """Periodically remove stale messages from the index."""
 
         async def housekeeping(dt_now: dt, _cutoff: td = td(days=1)) -> None:
-            """
-            Deletes all messages older than a given delta from the dict using the MessageIndex.
-            :param dt_now: current timestamp
-            :param _cutoff: the oldest timestamp to retain, default is 24 hours ago
-            """
             dtm = dt_now - _cutoff
-
-            # Submit prune request to worker (Non-blocking I/O)
-            self._worker.submit_prune(dtm)
-
-            # Prune in-memory cache synchronously (Fast CPU-bound op)
             dtm_iso = dtm.isoformat(timespec="microseconds")
 
-            try:  # make this operation atomic, i.e. update self._msgs only on success
-                await self._lock.acquire()
-                # Rebuild dict keeping only newer items
-                self._msgs = OrderedDict(
-                    (k, v) for k, v in self._msgs.items() if k >= dtm_iso
-                )
+            # Recommendation 2: Tight synchronization.
+            # Submit prune request to worker (Non-blocking). [cite: 56, 323]
+            self._worker.submit_prune(dtm)
+
+            # Ensure the SQL partition is pruned before we proceed.
+            # This prevents a "Hollow Index" where RAM is empty but SQL returns a dtm.
+            await asyncio.get_running_loop().run_in_executor(None, self.flush)
+
+            try:
+                async with self._lock:  # Use context manager for safety
+                    # Prune in-memory cache to match the SQL partition. [cite: 320, 382]
+                    self._msgs = OrderedDict(
+                        (k, v) for k, v in self._msgs.items() if k >= dtm_iso
+                    )
 
             except Exception as err:
                 _LOGGER.warning("MessageIndex housekeeping error: %s", err)
             else:
-                _LOGGER.debug(
-                    "MessageIndex housekeeping completed, retained messages >= %s",
-                    dtm_iso,
-                )
-            finally:
-                self._lock.release()
+                _LOGGER.debug("Sync Housekeeping: RAM and SQL pruned to %s", dtm_iso)
 
         while True:
             self._last_housekeeping = dt.now()
-            await asyncio.sleep(3600)
+            await asyncio.sleep(3600)  # Hourly check [cite: 226]
 
-            if self.store:  # Snapshot to disk (Blocking I/O offloaded to executor)
+            # Offload save_db to executor as it is blocking I/O. [cite: 305, 489]
+            if self.store:
                 try:
                     await asyncio.get_running_loop().run_in_executor(
                         None, self._save_db
@@ -315,7 +310,6 @@ class MessageIndex:
                 except Exception as err:
                     _LOGGER.error("MessageIndex: Snapshot failed: %s", err)
 
-            _LOGGER.info("Starting next MessageIndex housekeeping")
             await housekeeping(self._last_housekeeping)
 
     def add(self, msg: Message) -> Message | None:
