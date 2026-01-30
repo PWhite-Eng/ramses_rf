@@ -449,8 +449,14 @@ class MessageIndex:
             # _frame usually looks like " I --- 01:123456 ..." (missing RSSI)
             # It might have leading spaces. We strip them to ensure standard format.
             clean_frame = msg._pkt._frame.lstrip()
-            # We prepend a default RSSI to make it a valid full frame
-            blob = f"... {clean_frame}"
+
+            # We prepend a default RSSI to make it a valid full frame.
+            # FIX: " I" and " W" verbs require a leading space, which lstrip() removes.
+            # We must restore this space so Packet(blob) slicing [4:] results in " I..."
+            if clean_frame.startswith(("I ", "W ")):
+                blob = f"...  {clean_frame}"
+            else:
+                blob = f"... {clean_frame}"
         else:
             # Fallback: remove timestamp from str representation if present
             # Robustly find the start of the frame (RSSI or Verb) using regex
