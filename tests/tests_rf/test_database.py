@@ -2,8 +2,10 @@
 """RAMSES RF - Unit test for MessageIndex."""
 
 import contextlib
+import os
 from datetime import datetime as dt, timedelta as td
 from pathlib import Path
+from unittest.mock import patch
 
 from ramses_rf.database import MessageIndex
 from ramses_tx import Message, Packet
@@ -292,4 +294,40 @@ class TestMessageIndex:
 
         msg_db.stop()
 
-    # tests/tests_rf/test_database.py
+    async def test_race_condition_production_mode(self) -> None:
+        """Test that reads immediately after writes return data (Production Mode).
+
+        This test simulates Production mode by removing the PYTEST_CURRENT_TEST
+        environment variable, preventing the database.py 'flush()' cheat.
+        """
+        # Create a new, unique DB to avoid side effects
+        msg_db = MessageIndex()
+
+        # Mock the environment to simulate production (no auto-flush)
+        with patch.dict(os.environ, {}, clear=True):
+            # 1. Add a message
+            # In production, this queues the write to the worker and returns immediately.
+            msg_db.add(self.msg1)
+
+            # 2. Immediately query for the message using parameters (Trigger SQL SELECT)
+            # This mimics the behavior of the dispatcher/device entities looking for state
+            # right after a packet arrives.
+            # If the architecture is truly "Zero Latency", this should return the packet.
+            # If the SQL worker hasn't committed yet, this will fail (return empty).
+            result = msg_db.get(code="1298")
+
+        # 3. Assert Results
+        # If this fails, the "Phase 1" implementation is incomplete regarding
+        # latency/race-condition handling for queries.
+        if len(result) == 0:
+            print(
+                "\n!!! FAILURE: Read-After-Write Race Detected. "
+                "SQL Worker did not commit before Read. !!!"
+            )
+
+        assert len(result) == 1, (
+            "Race condition detected: Message added but not found immediately. "
+            "Ensure 'RAM-First' reads are implemented or Worker is flushed."
+        )
+
+        msg_db.stop()
