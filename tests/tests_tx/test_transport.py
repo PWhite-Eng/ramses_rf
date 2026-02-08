@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from ramses_tx import exceptions as exc
-from ramses_tx.transport import CallbackTransport, is_hgi80, transport_factory
+from ramses_tx.transports import CallbackTransport, is_hgi80, transport_factory
 
 
 async def _async_callback_factory(*args: Any, **kwargs: Any) -> CallbackTransport:
@@ -110,11 +110,11 @@ async def test_factory_strips_autostart_for_standard_transport() -> None:
     mock_protocol = Mock()
     mock_protocol.wait_for_connection_made = AsyncMock()
 
-    # We must patch serial_for_url because transport_factory calls it via
-    # get_serial_instance BEFORE creating PortTransport.
+    # REF: We patch 'ramses_tx.transports.PortTransport' because transport_factory
+    # imports it directly into the 'ramses_tx.transports' namespace.
     with (
-        patch("ramses_tx.transport.PortTransport") as MockPortTransport,
-        patch("ramses_tx.transport.serial_for_url") as mock_serial_for_url,
+        patch("ramses_tx.transports.PortTransport") as MockPortTransport,
+        patch("ramses_tx.transports.serial.serial_for_url") as mock_serial_for_url,
     ):
         # Setup the mock serial object to pass validity checks
         mock_serial = Mock()
@@ -145,7 +145,8 @@ async def test_factory_strips_autostart_for_mqtt_transport() -> None:
     mock_protocol = Mock()
     mock_protocol.wait_for_connection_made = AsyncMock()
 
-    with patch("ramses_tx.transport.MqttTransport") as MockMqttTransport:
+    # REF: Patch 'ramses_tx.transports.MqttTransport' for the same reason as above.
+    with patch("ramses_tx.transports.MqttTransport") as MockMqttTransport:
         # valid-looking config so factory enters the MQTT branch
         # We must provide port_config because transport_factory validates it
         # is not None even for MQTT
@@ -169,32 +170,48 @@ async def test_port_transport_close_robustness() -> None:
     This ensures that _close() checks for the existence of _init_task before
     attempting to cancel it.
     """
-    from ramses_tx.transport import PortTransport
 
-    mock_protocol = Mock()
-    mock_serial = Mock()
+    # 1. Define a Dummy class to act as SerialTransport.
+    #    We DO NOT use Mock() here because patching Mock.__init__ breaks everything.
+    class DummySerialTransport:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
 
-    # Define a side_effect for SerialTransport.__init__ that sets required attributes
-    # PortTransport expects _loop to be set by the parent class
-    def mock_init(self: Any, loop: Any, protocol: Any, serial_instance: Any) -> None:
-        self._loop = loop or asyncio.get_event_loop()
-        self._protocol = protocol
-        self._serial = serial_instance  # Set backing attribute directly
+    # 2. Mock the missing module 'serial_asyncio'
+    mock_serial_asyncio = Mock()
+    mock_serial_asyncio.SerialTransport = DummySerialTransport
 
-    # Patch SerialTransport.__init__ using 'new' to replace it with the function directly.
-    # This ensures 'self' is passed correctly, which doesn't happen with a standard Mock side_effect.
-    with patch(
-        "ramses_tx.transport.serial_asyncio.SerialTransport.__init__",
-        new=mock_init,
-    ):
-        transport = PortTransport(mock_serial, mock_protocol)
+    with patch.dict("sys.modules", {"serial_asyncio": mock_serial_asyncio}):
+        # Now it is safe to import.
+        from ramses_tx.transports.serial import PortTransport
 
-        # Pre-condition: _init_task is created asynchronously, so it shouldn't exist yet
-        # because we haven't yielded to the event loop
-        assert not hasattr(transport, "_init_task")
+        mock_protocol = Mock()
+        mock_serial = Mock()
 
-        # Execute close - should not raise AttributeError
-        transport.close()
+        # Define a side_effect for SerialTransport.__init__
+        def mock_init(
+            self: Any, loop: Any, protocol: Any, serial_instance: Any
+        ) -> None:
+            self._loop = loop or asyncio.get_event_loop()
+            self._protocol = protocol
+            # Set BOTH backing attribute and public attribute to be safe
+            self._serial = serial_instance
+            self.serial = serial_instance
+
+        # Patch the Dummy class's __init__
+        with patch.object(
+            DummySerialTransport,
+            "__init__",
+            side_effect=mock_init,
+            autospec=True,
+        ):
+            transport = PortTransport(mock_serial, mock_protocol)
+
+            # Pre-condition check
+            assert not hasattr(transport, "_init_task")
+
+            # Execute close - should not raise AttributeError
+            transport.close()
 
 
 async def test_is_hgi80_async_file_check() -> None:
@@ -203,27 +220,23 @@ async def test_is_hgi80_async_file_check() -> None:
     This test verifies that the file check does not block the event loop and
     uses the expected executor logic.
     """
-
-    # We define a path that contains "by-id" and "evofw3".
-    # This ensures that is_hgi80 returns False immediately after the file check,
-    # preventing it from proceeding to the complex 'comports' logic which triggers I/O.
     test_port = "/dev/serial/by-id/usb-SparkFun_evofw3_TEST"
 
     # 1. Test: File exists (should return False due to 'evofw3' in name)
-    # We patch os.path.exists to return True
-    with patch("ramses_tx.transport.os.path.exists", return_value=True) as mock_exists:
+    # REF: Patch os.path.exists in the new location (transports.serial)
+    with patch(
+        "ramses_tx.transports.serial.os.path.exists", return_value=True
+    ) as mock_exists:
         result = await is_hgi80(test_port)
 
-        # Assert: os.path.exists was called with the correct path
         mock_exists.assert_called_once_with(test_port)
-        # Assert: Logic correctly identified it as NOT HGI80 (due to evofw3 name)
         assert result is False
 
     # 2. Test: File does NOT exist (should raise TransportSerialError)
-    # We patch os.path.exists to return False
-    with patch("ramses_tx.transport.os.path.exists", return_value=False) as mock_exists:
+    with patch(
+        "ramses_tx.transports.serial.os.path.exists", return_value=False
+    ) as mock_exists:
         with pytest.raises(exc.TransportSerialError):
             await is_hgi80(test_port)
 
-        # Assert: os.path.exists was called
         mock_exists.assert_called_once_with(test_port)

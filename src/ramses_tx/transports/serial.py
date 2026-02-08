@@ -12,10 +12,11 @@ from collections.abc import Iterable
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
+import serial_asyncio_fast as serial_asyncio
 from serial import (  # type: ignore[import-untyped]
     Serial as _Serial,
     SerialException,
-    serial_for_url,
+    serial_for_url as serial_for_url,
 )
 
 from .. import exceptions as exc
@@ -45,7 +46,7 @@ from .base import (
 if TYPE_CHECKING:
     from ..protocol import RamsesProtocolT
     from ..schemas import PortConfigT
-    from ..typing import ExceptionT, SerPortNameT
+    from ..typing import SerPortNameT
 
     # STUB: Define a safe type stub for Mypy to use within this file
     class Serial:
@@ -62,13 +63,17 @@ else:
 
 # Platform-specific imports for comports
 if os.name == "nt":
-    from serial.tools.list_ports_windows import comports  # type: ignore[import-untyped]
+    from serial.tools.list_ports_windows import (  # type: ignore[import-untyped]
+        comports as comports,
+    )
 elif os.name != "posix":
     raise ImportError(
         f"Sorry: no implementation for your platform ('{os.name}') available"
     )
 elif sys.platform.lower()[:5] != "linux":
-    from serial.tools.list_ports_posix import comports  # type: ignore[import-untyped]
+    from serial.tools.list_ports_posix import (  # type: ignore[import-untyped]
+        comports as comports,
+    )
 else:
     from serial.tools.list_ports_linux import SysFS  # type: ignore[import-untyped]
 
@@ -204,7 +209,27 @@ class _PortTransportAbstractor(asyncio.Transport):
         # but here we rely on PortTransport inheritance structure
 
 
-class PortTransport(_RegHackMixin, _FullTransport):
+class _MroInitShim:
+    """Helper to block the MRO chain from reaching SerialTransport.__init__ via super().
+
+    This is necessary because PortTransport manually initializes SerialTransport
+    to pass strict arguments, but _BaseTransport (higher in MRO) tries to
+    initialize it again with generic arguments, causing a TypeError.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # We deliberately Swallow the init call here.
+        # Do NOT call super().__init__ because the next class in the chain
+        # is SerialTransport, which requires arguments we don't have here.
+        pass
+
+
+class PortTransport(  # type: ignore[misc]
+    _RegHackMixin,
+    _FullTransport,
+    _MroInitShim,
+    serial_asyncio.SerialTransport,
+):
     """Send/receive packets async to/from evofw3/HGI80 via a serial port."""
 
     _init_fut: asyncio.Future[Any]
@@ -222,11 +247,8 @@ class PortTransport(_RegHackMixin, _FullTransport):
         loop: asyncio.AbstractEventLoop | None = None,
         **kwargs: Any,
     ) -> None:
-        # Manually mixin serial_asyncio logic here if needed, or assume external usage
-        # calls create_serial_connection. For strict refactoring of existing code:
-        from serial_asyncio import SerialTransport  # type: ignore[import-not-found]
-
-        SerialTransport.__init__(
+        # Manually mixin serial_asyncio logic here.
+        serial_asyncio.SerialTransport.__init__(
             self, loop or asyncio.get_running_loop(), protocol, serial_instance
         )
         _FullTransport.__init__(self, loop=loop, **kwargs)
@@ -299,7 +321,7 @@ class PortTransport(_RegHackMixin, _FullTransport):
             data: bytes = self.serial.read(self._max_read_size)
         except SerialException as err:
             if not self._closing:
-                self._close(exc=err)
+                self._close(error=err)
             return
 
         if not data:
@@ -351,16 +373,29 @@ class PortTransport(_RegHackMixin, _FullTransport):
     def _write(self, data: bytes) -> None:
         self.serial.write(data)
 
-    def _abort(self, exc: ExceptionT) -> None:
-        # SerialTransport._abort(self, exc)
-        super()._abort(exc)  # type: ignore[misc]
+    def _abort(self, exc: BaseException | None) -> None:
+        """Abort the transport connection.
+
+        Overridden to match SerialTransport signature (BaseException).
+        """
+        super()._abort(exc)
         if self._init_task:
             self._init_task.cancel()
         if self._leaker_task:
             self._leaker_task.cancel()
 
-    def _close(self, exc: exc.RamsesException | None = None) -> None:
-        super()._close(exc)
+    def _close(self, error: Exception | None = None) -> None:
+        """Close the transport connection.
+
+        Overridden to match SerialTransport signature (Exception | None).
+        """
+        # We must satisfy the base class signature (Exception | None), but
+        # _FullTransport._close expects RamsesException | None.
+        if error and isinstance(error, exc.RamsesException):
+            super()._close(error)
+        else:
+            super()._close(None)
+
         if init_task := getattr(self, "_init_task", None):
             init_task.cancel()
         if self._leaker_task:

@@ -9,10 +9,17 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 from .. import exceptions as exc
 from ..const import DEFAULT_TIMEOUT_MQTT, DEFAULT_TIMEOUT_PORT
+from .base import _str
 from .file import FileTransport
 from .ip import CallbackTransport
 from .mqtt import MqttTransport
-from .serial import PortTransport, create_serial_port, is_hgi80
+from .serial import (
+    PortTransport,
+    comports as comports,
+    create_serial_port,
+    is_hgi80,
+    serial_for_url,
+)
 
 if TYPE_CHECKING:
     from ..protocol import RamsesProtocolT
@@ -34,6 +41,9 @@ __all__ = [
     "RamsesTransportT",
     "is_hgi80",
     "transport_factory",
+    "_str",
+    "serial_for_url",
+    "comports",
 ]
 
 

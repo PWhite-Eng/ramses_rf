@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import re
 from collections import deque
@@ -247,7 +248,7 @@ class _ReadTransport(_BaseTransport):
             return
         self._closing = True
         self.loop.call_soon_threadsafe(
-            asyncio.partial(self._protocol.connection_lost, exc)  # type: ignore[attr-defined]
+            functools.partial(self._protocol.connection_lost, exc)  # type: ignore[arg-type]
         )
 
     def close(self) -> None:
@@ -265,7 +266,7 @@ class _ReadTransport(_BaseTransport):
     def _make_connection(self, gwy_id: DeviceIdT | None) -> None:
         self._extra[SZ_ACTIVE_HGI] = gwy_id
         self.loop.call_soon_threadsafe(
-            asyncio.partial(self._protocol.connection_made, self, ramses=True)  # type: ignore[attr-defined]
+            functools.partial(self._protocol.connection_made, self, ramses=True)  # type: ignore[arg-type]
         )
 
     def _frame_read(self, dtm_str: str, frame: str) -> None:
