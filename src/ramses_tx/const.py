@@ -12,6 +12,29 @@ from enum import EnumCheck, IntEnum, StrEnum, verify
 from types import SimpleNamespace
 from typing import Any, Final, Literal, NoReturn
 
+DEFAULT_TIMEOUT_PORT: Final[float] = 3
+DEFAULT_TIMEOUT_MQTT: Final[float] = 60  # Updated from 9s to 60s for robustness
+
+# String constants (previously imported from schemas)
+SZ_BOUND_TO: Final = "bound"
+SZ_EVOFW_FLAG: Final = "evofw_flag"
+SZ_INBOUND: Final = "inbound"
+SZ_OUTBOUND: Final = "outbound"
+SZ_SERIAL_PORT: Final = "serial_port"
+SZ_SERIAL_PORT_CONFIG: Final = "port_config"
+
+SIGNATURE_GAP_SECS: Final[float] = 0.05
+SIGNATURE_MAX_TRYS: Final[int] = 40  # was: 24
+SIGNATURE_MAX_SECS: Final[int] = 3
+
+SZ_RAMSES_GATEWAY: Final = "RAMSES/GATEWAY"
+SZ_READER_TASK: Final = "reader_task"
+
+# NOTE: All debug flags should be False for deployment to end-users
+DBG_DISABLE_DUTY_CYCLE_LIMIT: Final[bool] = False
+DBG_DISABLE_REGEX_WARNINGS: Final[bool] = False
+DBG_FORCE_FRAME_LOGGING: Final[bool] = False
+
 __dev_mode__ = False  # NOTE: this is const.py
 DEV_MODE = __dev_mode__
 
@@ -58,9 +81,9 @@ SZ_SIGNATURE: Final = "signature"
 SZ_IS_EVOFW3: Final = "is_evofw3"
 
 # default values for transmit rate governers...
-DUTY_CYCLE_DURATION = 60  #      time window (seconds) where rate limiting occurs
-MAX_DUTY_CYCLE_RATE = 0.01  #    % bandwidth used per cycle
-MAX_TRANSMIT_RATE_TOKENS = 80  # transmits per cycle
+DUTY_CYCLE_DURATION: Final[int] = 60  # time window (seconds) where rate limiting occurs
+MAX_DUTY_CYCLE_RATE: Final[float] = 0.01  #    % bandwidth used per cycle
+MAX_TRANSMIT_RATE_TOKENS: Final[int] = 80  # transmits per cycle
 
 
 # used by schedule.py...

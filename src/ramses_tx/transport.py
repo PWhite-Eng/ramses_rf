@@ -75,12 +75,22 @@ from serial import (  # type: ignore[import-untyped]
 from . import exceptions as exc
 from .command import Command
 from .const import (
+    DBG_DISABLE_DUTY_CYCLE_LIMIT,
+    DBG_DISABLE_REGEX_WARNINGS,
+    DBG_FORCE_FRAME_LOGGING,
+    DEFAULT_TIMEOUT_MQTT,
+    DEFAULT_TIMEOUT_PORT,
     DUTY_CYCLE_DURATION,
     MAX_DUTY_CYCLE_RATE,
     MAX_TRANSMIT_RATE_TOKENS,
     MIN_INTER_WRITE_GAP,
+    SIGNATURE_GAP_SECS,
+    SIGNATURE_MAX_SECS,
+    SIGNATURE_MAX_TRYS,
     SZ_ACTIVE_HGI,
     SZ_IS_EVOFW3,
+    SZ_RAMSES_GATEWAY,
+    SZ_READER_TASK,
     SZ_SIGNATURE,
 )
 from .helpers import dt_now
@@ -93,6 +103,7 @@ from .schemas import (
     DeviceIdT,
     PortConfigT,
 )
+from .transports.ip import CallbackTransport
 from .typing import ExceptionT, SerPortNameT
 
 from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
@@ -105,24 +116,6 @@ from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
 
 if TYPE_CHECKING:
     from .protocol import RamsesProtocolT
-
-
-_DEFAULT_TIMEOUT_PORT: Final[float] = 3
-_DEFAULT_TIMEOUT_MQTT: Final[float] = 60  # Updated from 9s to 60s for robustness
-
-_SIGNATURE_GAP_SECS = 0.05
-_SIGNATURE_MAX_TRYS = 40  # was: 24
-_SIGNATURE_MAX_SECS = 3
-
-SZ_RAMSES_GATEWAY: Final = "RAMSES/GATEWAY"
-SZ_READER_TASK: Final = "reader_task"
-
-
-#
-# NOTE: All debug flags should be False for deployment to end-users
-_DBG_DISABLE_DUTY_CYCLE_LIMIT: Final[bool] = False
-_DBG_DISABLE_REGEX_WARNINGS: Final[bool] = False
-_DBG_FORCE_FRAME_LOGGING: Final[bool] = False
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -372,7 +365,7 @@ def limit_duty_cycle(
             )
             last_time_bit_added = perf_counter()
 
-            if _DBG_DISABLE_DUTY_CYCLE_LIMIT:
+            if DBG_DISABLE_DUTY_CYCLE_LIMIT:
                 bits_in_bucket = BUCKET_CAPACITY
 
             # if required, wait for the bit bucket to refill (not for SETs/PUTs)
@@ -494,22 +487,6 @@ def track_system_syncs(fnc: Callable[..., None]) -> Callable[..., Any]:
 
 # ### Abstractors #####################################################################
 # ### Do the bare minimum to abstract each transport from its underlying class
-
-
-class _CallbackTransportAbstractor:
-    """Do the bare minimum to abstract a transport from its underlying class."""
-
-    def __init__(
-        self, loop: asyncio.AbstractEventLoop | None = None, **kwargs: Any
-    ) -> None:
-        """Initialize the callback transport abstractor.
-
-        :param loop: The asyncio event loop, defaults to None.
-        :type loop: asyncio.AbstractEventLoop | None, optional
-        """
-        self._loop = loop or asyncio.get_event_loop()
-        # Consume 'kwargs' here. Do NOT pass them to object.__init__().
-        super().__init__()
 
 
 class _BaseTransport:
@@ -949,7 +926,7 @@ class _RegHackMixin:
             except re.error as err:
                 _LOGGER.warning(f"{pkt_line} < issue with regex ({k}, {v}): {err}")
 
-        if result != pkt_line and not _DBG_DISABLE_REGEX_WARNINGS:
+        if result != pkt_line and not DBG_DISABLE_REGEX_WARNINGS:
             _LOGGER.warning(f"{pkt_line} < Changed by use_regex to: {result}")
         return result
 
@@ -1121,11 +1098,11 @@ class PortTransport(_RegHackMixin, _FullTransport, _PortTransportAbstractor):  #
             self._extra[SZ_SIGNATURE] = sig.payload
 
             num_sends = 0
-            while num_sends < _SIGNATURE_MAX_TRYS:
+            while num_sends < SIGNATURE_MAX_TRYS:
                 num_sends += 1
 
                 await self._write_frame(str(sig))
-                await asyncio.sleep(_SIGNATURE_GAP_SECS)
+                await asyncio.sleep(SIGNATURE_GAP_SECS)
 
                 if self._init_fut.done():
                     pkt = self._init_fut.result()
@@ -1149,10 +1126,10 @@ class PortTransport(_RegHackMixin, _FullTransport, _PortTransportAbstractor):  #
             )
 
         try:  # wait to get (1st) signature echo from evofw3/HGI80, if any
-            await asyncio.wait_for(self._init_fut, timeout=_SIGNATURE_MAX_SECS)
+            await asyncio.wait_for(self._init_fut, timeout=SIGNATURE_MAX_SECS)
         except TimeoutError as err:
             raise exc.TransportSerialError(
-                f"Failed to initialise Transport within {_SIGNATURE_MAX_SECS} secs"
+                f"Failed to initialise Transport within {SIGNATURE_MAX_SECS} secs"
             ) from err
 
     async def _leak_sem(self) -> None:
@@ -1185,7 +1162,7 @@ class PortTransport(_RegHackMixin, _FullTransport, _PortTransportAbstractor):  #
             return
 
         for dtm, raw_line in bytes_read(data):
-            if _DBG_FORCE_FRAME_LOGGING:
+            if DBG_FORCE_FRAME_LOGGING:
                 _LOGGER.warning("Rx: %s", raw_line)
             elif _LOGGER.getEffectiveLevel() == logging.INFO:  # log for INFO not DEBUG
                 _LOGGER.info("Rx: %s", raw_line)
@@ -1236,7 +1213,7 @@ class PortTransport(_RegHackMixin, _FullTransport, _PortTransportAbstractor):  #
         data = bytes(frame, "ascii") + b"\r\n"
 
         log_msg = f"Serial transport transmitting frame: {frame}"
-        if _DBG_FORCE_FRAME_LOGGING:
+        if DBG_FORCE_FRAME_LOGGING:
             _LOGGER.warning(log_msg)
         elif _LOGGER.getEffectiveLevel() > logging.DEBUG:
             _LOGGER.info(log_msg)
@@ -1589,7 +1566,7 @@ class MqttTransport(_FullTransport, _MqttTransportAbstractor):
         #     (msg.timestamp, msg.topic, msg.payload),
         # )
 
-        if _DBG_FORCE_FRAME_LOGGING:
+        if DBG_FORCE_FRAME_LOGGING:
             _LOGGER.warning("Rx: %s", msg.payload)
         elif self._log_all and _LOGGER.getEffectiveLevel() == logging.INFO:
             # log for INFO not DEBUG
@@ -1734,7 +1711,7 @@ class MqttTransport(_FullTransport, _MqttTransportAbstractor):
 
         data = json.dumps({"msg": frame})
 
-        if _DBG_FORCE_FRAME_LOGGING:
+        if DBG_FORCE_FRAME_LOGGING:
             _LOGGER.warning("Tx: %s", data)
         elif _LOGGER.getEffectiveLevel() == logging.INFO:  # log for INFO not DEBUG
             _LOGGER.info("Tx: %s", data)
@@ -1798,111 +1775,6 @@ class MqttTransport(_FullTransport, _MqttTransportAbstractor):
             self.client.loop_stop()
         except Exception as err:
             _LOGGER.debug(f"Error during MQTT cleanup: {err}")
-
-
-class CallbackTransport(_FullTransport, _CallbackTransportAbstractor):
-    """A virtual transport that delegates I/O to external callbacks (Inversion of Control).
-
-    This transport allows ramses_rf to be used with external connection managers
-    (like Home Assistant's MQTT integration) without direct dependencies.
-    """
-
-    def __init__(
-        self,
-        protocol: RamsesProtocolT,
-        io_writer: Callable[[str], Awaitable[None]],
-        disable_sending: bool = False,
-        autostart: bool = False,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize the callback transport.
-
-        :param protocol: The protocol instance.
-        :type protocol: RamsesProtocolT
-        :param io_writer: Async callable to handle outbound frames.
-        :type io_writer: Callable[[str], Awaitable[None]]
-        :param disable_sending: Whether to disable sending, defaults to False.
-        :type disable_sending: bool, optional
-        :param autostart: Whether to start reading immediately, defaults to False.
-        :type autostart: bool, optional
-        """
-        # Pass kwargs up the chain. _ReadTransport will extract 'loop' if present.
-        # _BaseTransport will pass 'loop' to _CallbackTransportAbstractor, which consumes it.
-        super().__init__(disable_sending=disable_sending, **kwargs)
-
-        self._protocol = protocol
-        self._io_writer = io_writer
-
-        # Section 3.1: "Initial State: Default to a PAUSED state"
-        self._reading = False
-
-        # Section 6.1: Object Lifecycle Logging
-        _LOGGER.info(f"CallbackTransport created with io_writer={io_writer}")
-
-        # Handshake: Notify protocol immediately (Safe: idempotent)
-        self._protocol.connection_made(self, ramses=True)
-
-        if autostart:
-            self.resume_reading()
-
-    async def write_frame(self, frame: str, disable_tx_limits: bool = False) -> None:
-        """Process a frame for transmission by passing it to the external writer.
-
-        :param frame: The frame to write.
-        :type frame: str
-        :param disable_tx_limits: Unused for this transport, kept for API compatibility.
-        :type disable_tx_limits: bool, optional
-        :raises exc.TransportError: If sending is disabled or the writer fails.
-        """
-        if self._disable_sending:
-            raise exc.TransportError("Sending has been disabled")
-
-        # Section 6.1: Boundary Logging (Outgoing)
-        _LOGGER.debug(f"Sending frame via external writer: {frame}")
-
-        try:
-            await self._io_writer(frame)
-        except Exception as err:
-            _LOGGER.error(f"External writer failed to send frame: {err}")
-            raise exc.TransportError(f"External writer failed: {err}") from err
-
-    async def _write_frame(self, frame: str) -> None:
-        """Wait for the frame to be written by the external writer.
-
-        :param frame: The frame to write.
-        :type frame: str
-        """
-        # Wrapper to satisfy abstract base class, though logic is in write_frame
-        await self.write_frame(frame)
-
-    def receive_frame(self, frame: str, dtm: str | None = None) -> None:
-        """Ingest a frame from the external source (Read Path).
-
-        This is the public method called by the Bridge to inject data.
-
-        :param frame: The raw frame string to receive.
-        :type frame: str
-        :param dtm: The timestamp of the frame, defaults to current time.
-        :type dtm: str | None, optional
-        """
-        _LOGGER.debug(
-            f"Received frame from external source: frame={repr(frame)}, timestamp={dtm}"
-        )
-
-        # Circuit Breaker implementation (Packet gating)
-        if not self._reading:
-            _LOGGER.debug(f"Dropping received frame (transport paused): {repr(frame)}")
-            return
-
-        dtm = dtm or dt_now().isoformat()
-
-        # Boundary Logging (Incoming)
-        _LOGGER.debug(
-            f"Ingesting frame into transport: frame={repr(frame)}, timestamp={dtm}"
-        )
-
-        # Pass to the standard processing pipeline
-        self._frame_read(dtm, frame.rstrip())
 
 
 def validate_topic_path(path: str) -> str:
@@ -2069,7 +1941,7 @@ async def transport_factory(
     # MQTT
     if port_name[:4] == "mqtt":
         # Check for custom timeout in kwargs, fallback to constant
-        mqtt_timeout = kwargs.get("timeout", _DEFAULT_TIMEOUT_MQTT)
+        mqtt_timeout = kwargs.get("timeout", DEFAULT_TIMEOUT_MQTT)
 
         transport = MqttTransport(
             port_name,
@@ -2110,6 +1982,6 @@ async def transport_factory(
     )
 
     # TODO: remove this? better to invoke timeout after factory returns?
-    await protocol.wait_for_connection_made(timeout=_DEFAULT_TIMEOUT_PORT)
+    await protocol.wait_for_connection_made(timeout=DEFAULT_TIMEOUT_PORT)
     # pytest-cov times out in virtual_rf.py when set below 30.0 on GitHub Actions
     return transport

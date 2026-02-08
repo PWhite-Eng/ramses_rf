@@ -45,9 +45,8 @@ from ramses_tx.schemas import (
     PktLogConfigT,
     PortConfigT,
 )
-from ramses_tx.transport import SZ_READER_TASK
 
-from .const import DONT_CREATE_MESSAGES, SZ_DEVICES
+from .const import DONT_CREATE_MESSAGES, SZ_DEVICES, SZ_READER_TASK
 from .database import MessageIndex
 from .device import DeviceHeat, DeviceHvac, Fakeable, HgiGateway, device_factory
 from .dispatcher import detect_array_fragment, process_msg

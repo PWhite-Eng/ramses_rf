@@ -19,12 +19,16 @@ from .const import (
     DEVICE_ID_REGEX,
     MAX_DUTY_CYCLE_RATE,
     MIN_INTER_WRITE_GAP,
+    SZ_BOUND_TO,
+    SZ_EVOFW_FLAG,
+    SZ_INBOUND as SZ_INBOUND,
+    SZ_OUTBOUND as SZ_OUTBOUND,
+    SZ_SERIAL_PORT,
+    SZ_SERIAL_PORT_CONFIG as SZ_SERIAL_PORT_CONFIG,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-
-#
 # 0/5: Packet source configuration
 SZ_COMMS_PARAMS: Final = "comms_params"
 SZ_DUTY_CYCLE_LIMIT: Final = "duty_cycle_limit"
@@ -132,7 +136,7 @@ SCH_PACKET_LOG = vol.Schema(
 # 3/5: Serial port configuration
 SZ_PORT_CONFIG: Final = "port_config"
 SZ_PORT_NAME: Final = "port_name"
-SZ_SERIAL_PORT: Final = "serial_port"
+# SZ_SERIAL_PORT: Final = "serial_port" # defined in const.py
 
 SZ_BAUDRATE: Final = "baudrate"
 SZ_DSRDTR: Final = "dsrdtr"
@@ -221,7 +225,7 @@ def ConvertNullToDict() -> Callable[[_T | None], _T | dict[Never, Never]]:
 
 
 SZ_ALIAS: Final = "alias"
-SZ_BOUND_TO: Final = "bound"
+# SZ_BOUND_TO: Final = "bound"  # defined in const.py
 SZ_CLASS: Final = "class"
 SZ_FAKED: Final = "faked"
 SZ_SCHEME: Final = "scheme"
@@ -410,7 +414,7 @@ SZ_DISABLE_SENDING: Final = "disable_sending"
 SZ_AUTOSTART: Final = "autostart"
 SZ_DISABLE_QOS: Final = "disable_qos"
 SZ_ENFORCE_KNOWN_LIST: Final[str] = f"enforce_{SZ_KNOWN_LIST}"
-SZ_EVOFW_FLAG: Final = "evofw_flag"
+# SZ_EVOFW_FLAG: Final = "evofw_flag"  # defined in const.py
 SZ_SQLITE_INDEX: Final = (
     "sqlite_index"  # temporary 0.52.x SQLite dev config option in ramses_cc
 )
@@ -438,5 +442,5 @@ SCH_ENGINE_DICT = {
 }
 SCH_ENGINE_CONFIG = vol.Schema(SCH_ENGINE_DICT, extra=vol.REMOVE_EXTRA)
 
-SZ_INBOUND: Final = "inbound"  # for use_regex (intentionally obscured)
-SZ_OUTBOUND: Final = "outbound"
+# SZ_INBOUND: Final = "inbound"  # for use_regex (intentionally obscured)  # defined in const.py
+# SZ_OUTBOUND: Final = "outbound"                                          # defined in const.py

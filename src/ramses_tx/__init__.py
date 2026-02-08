@@ -26,14 +26,21 @@ from .const import (
     FA,
     FC,
     FF,
+    I_,
+    RP,
+    RQ,
     SZ_ACTIVE_HGI,
+    SZ_BOUND_TO,
     SZ_DEVICE_ROLE,
     SZ_DOMAIN_ID,
+    SZ_SERIAL_PORT,
     SZ_ZONE_CLASS,
     SZ_ZONE_IDX,
     SZ_ZONE_MASK,
     SZ_ZONE_TYPE,
+    W_,
     ZON_ROLE_MAP,
+    Code,
     DevRole,
     DevType,
     IndexT,
@@ -57,8 +64,8 @@ from .ramses import (
     SZ_MIN_VALUE,
     SZ_PRECISION,
 )
-from .schemas import SZ_BOUND_TO, SZ_SERIAL_PORT, DeviceIdT, DeviceListT
-from .transport import (
+from .schemas import DeviceIdT, DeviceListT
+from .transports import (
     FileTransport,
     PortTransport,
     RamsesTransportT,
@@ -67,15 +74,6 @@ from .transport import (
 )
 from .typing import QosParams
 from .version import VERSION
-
-from .const import (  # isort: skip
-    I_,
-    RP,
-    RQ,
-    W_,
-    Code,
-)
-
 
 __all__ = [
     "VERSION",
