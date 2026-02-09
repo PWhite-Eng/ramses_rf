@@ -12,11 +12,10 @@ import pytest
 
 from ramses_rf import Command, Gateway
 from ramses_tx.address import HGI_DEVICE_ID, Address
-from ramses_tx.models import QosParams
-from ramses_tx.protocol import RamsesProtocol
-from ramses_tx.protocol.exceptions import ProtocolSendFailed
+from ramses_tx.protocol import PortProtocol
+from ramses_tx.schemas import DeviceIdT
 from ramses_tx.transports import MqttTransport
-from ramses_tx.typing import DeviceIdT
+from ramses_tx.typing import QosParams
 
 from .conftest import _GwyConfigDictT
 
