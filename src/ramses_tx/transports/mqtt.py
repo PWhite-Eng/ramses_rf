@@ -48,6 +48,61 @@ def validate_topic_path(path: str) -> str:
     return new_path
 
 
+class _TokenBucket:
+    """A token bucket rate limiter implementation.
+
+    Encapsulates the logic for maintaining token counts and calculating
+    delays or drops based on a defined duty cycle.
+    """
+
+    def __init__(self, max_tokens: int, time_window: int) -> None:
+        self._max_capacity: Final[float] = float(max_tokens)
+        self._token_rate: Final[float] = self._max_capacity / time_window
+        self._tokens: float = self._max_capacity * 2
+        self._timestamp: float = perf_counter()
+
+        # Dynamic capacity that can grow/shrink within bounds
+        self._current_capacity: float = self._max_capacity * 2
+
+    async def consume(self, disable_limits: bool = False) -> bool:
+        """Attempt to consume a token.
+
+        Returns:
+            bool: True if the token was consumed (or limits disabled),
+                  False if the request should be dropped.
+        """
+        timestamp = perf_counter()
+        elapsed = timestamp - self._timestamp
+        self._timestamp = timestamp
+
+        # Refill tokens
+        self._tokens = min(
+            self._tokens + elapsed * self._token_rate, self._current_capacity
+        )
+
+        # Check if we are too far behind to even queue (Drop condition)
+        # Using the original logic: if < 1.0 - rate, we are in debt
+        if self._tokens < 1.0 - self._token_rate and not disable_limits:
+            return False
+
+        self._tokens -= 1.0
+
+        # Adjust capacity logic (preserved from original implementation)
+        if self._current_capacity > self._max_capacity:
+            self._current_capacity = min(self._current_capacity, self._tokens)
+            self._current_capacity = max(self._current_capacity, self._max_capacity)
+
+        # Calculate sleep if in debt (Throttle condition)
+        if self._tokens < 0.0 and not disable_limits:
+            delay = (0 - self._tokens) / self._token_rate
+            await asyncio.sleep(delay)
+
+        return True
+
+    def __repr__(self) -> str:
+        return f"{self._tokens:.2f}/{self._current_capacity:.2f}"
+
+
 class _MqttTransportAbstractor:
     """Do the bare minimum to abstract a transport from its underlying class."""
 
@@ -64,10 +119,6 @@ class _MqttTransportAbstractor:
 
 class MqttTransport(_FullTransport, _MqttTransportAbstractor):
     """Send/receive packets to/from ramses_esp via MQTT."""
-
-    _MAX_TOKENS: Final[int] = MAX_TRANSMIT_RATE_TOKENS
-    _TIME_WINDOW: Final[int] = DUTY_CYCLE_DURATION
-    _TOKEN_RATE: Final[float] = _MAX_TOKENS / _TIME_WINDOW
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -91,10 +142,13 @@ class MqttTransport(_FullTransport, _MqttTransportAbstractor):
         self._current_reconnect_interval = self._reconnect_interval
         self._reconnect_task: asyncio.Task[None] | None = None
 
-        self._timestamp = perf_counter()
-        self._max_tokens: float = self._MAX_TOKENS * 2
-        self._num_tokens: float = self._MAX_TOKENS * 2
         self._log_all = kwargs.pop("log_all", False)
+
+        # Composition: Rate limiter logic extracted to helper class
+        self._rate_limiter = _TokenBucket(
+            max_tokens=MAX_TRANSMIT_RATE_TOKENS,
+            time_window=DUTY_CYCLE_DURATION,
+        )
 
         self.client = mqtt.Client(
             protocol=mqtt.MQTTv5, callback_api_version=CallbackAPIVersion.VERSION2
@@ -238,6 +292,16 @@ class MqttTransport(_FullTransport, _MqttTransportAbstractor):
         else:
             _LOGGER.info("MQTT reconnected - protocol connection already established")
 
+    def _parse_payload(self, payload: bytes) -> tuple[str, str]:
+        """Parse the raw MQTT payload into a timestamp and frame string.
+
+        Raises:
+            json.JSONDecodeError: If payload is not valid JSON.
+            KeyError: If payload is missing required keys.
+        """
+        data = json.loads(payload)
+        return data["ts"], data["msg"]
+
     def _on_message(
         self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage
     ) -> None:
@@ -246,13 +310,15 @@ class MqttTransport(_FullTransport, _MqttTransportAbstractor):
         elif self._log_all and _LOGGER.getEffectiveLevel() == logging.INFO:
             _LOGGER.info("mq Rx: %s", msg.payload)
 
+        # Handle Online/Offline Status messages
         if msg.topic[-3:] != "/rx":
             if msg.payload == b"offline":
-                if (
+                is_sub_topic = (
                     hasattr(self, "_topic_sub")
                     and self._topic_sub
                     and msg.topic == self._topic_sub[:-3]
-                ) or not hasattr(self, "_topic_sub"):
+                )
+                if is_sub_topic or not hasattr(self, "_topic_sub"):
                     _LOGGER.warning(
                         f"{self}: the ESP device is offline (via LWT): {msg.topic}"
                     )
@@ -265,6 +331,7 @@ class MqttTransport(_FullTransport, _MqttTransportAbstractor):
                 self._create_connection(msg)
             return
 
+        # Infer connection from data topic if not established
         if not self._connection_established and msg.topic.endswith("/rx"):
             topic_parts = msg.topic.split("/")
             if len(topic_parts) >= 3 and topic_parts[-2] not in ("+", "*"):
@@ -289,13 +356,14 @@ class MqttTransport(_FullTransport, _MqttTransportAbstractor):
                     finally:
                         self._data_wildcard_topic = ""
 
+        # Process the Frame
         try:
-            payload = json.loads(msg.payload)
-        except json.JSONDecodeError:
+            ts_iso, frame_str = self._parse_payload(msg.payload)
+        except (json.JSONDecodeError, KeyError):
             _LOGGER.warning("%s < Can't decode JSON (ignoring)", msg.payload)
             return
 
-        dtm = dt.fromisoformat(payload["ts"])
+        dtm = dt.fromisoformat(ts_iso)
         if dtm.tzinfo is not None:
             dtm = dtm.astimezone().replace(tzinfo=None)
         if dtm < dt.now() - td(days=90):
@@ -304,7 +372,7 @@ class MqttTransport(_FullTransport, _MqttTransportAbstractor):
             )
 
         try:
-            self._frame_read(dtm.isoformat(), _normalise(payload["msg"]))
+            self._frame_read(dtm.isoformat(), _normalise(frame_str))
         except exc.TransportError:
             if not self._closing:
                 raise
@@ -314,25 +382,12 @@ class MqttTransport(_FullTransport, _MqttTransportAbstractor):
             _LOGGER.debug(f"{self}: Dropping write - MQTT not connected")
             return
 
-        timestamp = perf_counter()
-        elapsed, self._timestamp = timestamp - self._timestamp, timestamp
-        self._num_tokens = min(
-            self._num_tokens + elapsed * self._TOKEN_RATE, self._max_tokens
-        )
+        # Delegate to TokenBucket for rate limiting
+        allowed = await self._rate_limiter.consume(disable_limits=disable_tx_limits)
 
-        if self._num_tokens < 1.0 - self._TOKEN_RATE and not disable_tx_limits:
-            _LOGGER.warning(f"{self}: Discarding write (tokens={self._num_tokens:.2f})")
+        if not allowed:
+            _LOGGER.warning(f"{self}: Discarding write (tokens={self._rate_limiter!r})")
             return
-
-        self._num_tokens -= 1.0
-        if self._max_tokens > self._MAX_TOKENS:
-            self._max_tokens = min(self._max_tokens, self._num_tokens)
-            self._max_tokens = max(self._max_tokens, self._MAX_TOKENS)
-
-        if self._num_tokens < 0.0 and not disable_tx_limits:
-            delay = (0 - self._num_tokens) / self._TOKEN_RATE
-            _LOGGER.debug(f"{self}: Sleeping (seconds={delay})")
-            await asyncio.sleep(delay)
 
         await super().write_frame(frame)
 
