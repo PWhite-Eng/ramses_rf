@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from ramses_tx import exceptions as exc
-from ramses_tx.transport import CallbackTransport
+from ramses_tx.transports import CallbackTransport
 
 
 class TestCallbackTransport(unittest.IsolatedAsyncioTestCase):

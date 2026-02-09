@@ -28,7 +28,7 @@ from .typing import QosParams
 
 if TYPE_CHECKING:
     from .protocol import RamsesProtocolT
-    from .transport import RamsesTransportT
+    from .transports import RamsesTransportT
     from .typing import ExceptionT
 
 #

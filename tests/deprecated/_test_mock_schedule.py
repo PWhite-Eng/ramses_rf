@@ -38,7 +38,7 @@ def pytest_generate_tests(metafunc):
 _global_flow_marker: int = None  # type: ignore[assignment]
 
 
-MIN_INTER_WRITE_GAP = 0  #  patch ramses_tx.transport
+MIN_INTER_WRITE_GAP = 0  #  patch ramses_tx.transports
 WAITING_TIMEOUT_SECS = 0  # patch ramses_rf.binding_fsm
 
 

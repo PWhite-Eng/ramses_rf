@@ -125,7 +125,7 @@ def fake_ti3410_port(request: pytest.FixtureRequest, rf: VirtualRf) -> PortStrT 
 async def mqtt_evofw3_port() -> PortStrT:
     """Utilize an actual evofw3-compatible gateway."""
 
-    # We could mock the MQTT client at: patch("ramses_tx.transport.MqttTransport"
+    # We could mock the MQTT client at: patch("ramses_tx.transports.MqttTransport"
     pytest.skip("This test fixture requires an MQTT broker")
 
     return "mqtt://mqtt_username:mqtt_passw0rd@127.0.0.1"  # type: ignore[unreachable]

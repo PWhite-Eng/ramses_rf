@@ -11,7 +11,7 @@ import serial  # type: ignore[import-untyped]
 
 from ramses_rf import Address, Code, Command, Gateway
 from ramses_tx.schemas import DeviceIdT
-from ramses_tx.transport import PortTransport
+from ramses_tx.transports import PortTransport
 from tests_rf.virtual_rf import VirtualRf, rf_factory
 
 # other constants

@@ -11,8 +11,8 @@ from syrupy.assertion import SnapshotAssertion
 
 from ramses_rf import Gateway
 from ramses_rf.device import DeviceHeat, DeviceHvac
+from ramses_tx.const import SZ_READER_TASK
 from ramses_tx.exceptions import TransportError
-from ramses_tx.transport import SZ_READER_TASK
 
 # Navigate up from tests/tests_rf/test_regression_rf.py to tests/fixtures/
 FIXTURE_FILE = Path(__file__).parents[1] / "fixtures" / "regression_packets.txt"

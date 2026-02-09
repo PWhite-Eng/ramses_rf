@@ -42,7 +42,7 @@ from .schemas import (
     PortConfigT,
     select_device_filter_mode,
 )
-from .transport import transport_factory
+from .transports import transport_factory
 from .typing import QosParams
 
 from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from .frame import PayloadT
     from .protocol import RamsesProtocolT
     from .schemas import DeviceIdT, DeviceListT
-    from .transport import RamsesTransportT
+    from .transports import RamsesTransportT
 
 _MsgHandlerT = Callable[[Message], None]
 

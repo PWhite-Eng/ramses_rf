@@ -32,7 +32,7 @@ def test_packet_parsing_regression(snapshot: SnapshotAssertion) -> None:
         if not line or line.startswith("#"):
             continue
 
-        # Logic mimics ramses_tx.transport.FileTransport._process_line_from_raw
+        # Logic mimics ramses_tx.transports.FileTransport._process_line_from_raw
         # Assuming strict 26-char timestamp format from log files
         if len(line) < 27:
             results.append(f"Line {line_no}: Skipped (too short)")

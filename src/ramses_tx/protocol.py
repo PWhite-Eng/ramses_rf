@@ -27,7 +27,7 @@ from .message import Message
 from .packet import Packet
 from .protocol_fsm import ProtocolContext
 from .schemas import SZ_BLOCK_LIST, SZ_CLASS, SZ_KNOWN_LIST, SZ_PORT_NAME
-from .transport import transport_factory
+from .transports import transport_factory
 from .typing import ExceptionT, MsgFilterT, MsgHandlerT, QosParams
 
 from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
@@ -40,7 +40,7 @@ from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
 
 if TYPE_CHECKING:
     from .schemas import DeviceIdT, DeviceListT
-    from .transport import RamsesTransportT
+    from .transports import RamsesTransportT
 
 
 TIP = f", configure the {SZ_KNOWN_LIST}/{SZ_BLOCK_LIST} as required"

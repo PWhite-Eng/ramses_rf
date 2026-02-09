@@ -54,7 +54,7 @@ def test_cli_uses_transport_factory(mock_gateway: MagicMock) -> None:
     assert args[0] == mqtt_url
 
     # FIX: We no longer expect transport_constructor to be passed explicitly
-    # because it causes recursion issues in ramses_tx.transport_factory
+    # because it causes recursion issues in ramses_tx.transports_factory
     # assert "transport_constructor" in kwargs
 
 
