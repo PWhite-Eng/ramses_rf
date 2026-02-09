@@ -90,6 +90,10 @@ def limit_duty_cycle(
 
         @wraps(fnc)
         async def wrapper(self: Any, frame: str, *args: Any, **kwargs: Any) -> None:
+            if kwargs.get("disable_tx_limits"):
+                await fnc(self, frame, *args, **kwargs)
+                return
+
             nonlocal bits_in_bucket
             nonlocal last_time_bit_added
 

@@ -104,7 +104,6 @@ def fake_evofw3_port(request: pytest.FixtureRequest, rf: VirtualRf) -> PortStrT 
 
     rf.set_gateway(rf.ports[0], gwy_dev_id, fw_type=HgiFwTypes.EVOFW3)
 
-    # with patch("ramses_tx.transports.comports", rf.comports):
     return rf.ports[0]
 
 
@@ -119,7 +118,6 @@ def fake_ti3410_port(request: pytest.FixtureRequest, rf: VirtualRf) -> PortStrT 
 
     rf.set_gateway(rf.ports[0], gwy_dev_id, fw_type=HgiFwTypes.HGI_80)
 
-    # with patch("ramses_tx.transports.comports", rf.comports):
     return rf.ports[0]
 
 
@@ -192,7 +190,7 @@ async def _fake_gateway(
 ) -> Gateway:
     """Wrapper to instantiate a virtual gateway."""
 
-    with patch("ramses_tx.transports.comports", rf.comports):
+    with patch("ramses_tx.transports.serial.comports", rf.comports):
         gwy = await _gateway(gwy_port, gwy_config)
 
     assert gwy._transport  # mypy
