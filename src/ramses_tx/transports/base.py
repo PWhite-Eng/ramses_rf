@@ -37,10 +37,19 @@ from ..const import (
 )
 from ..helpers import dt_now
 from ..packet import Packet
+from ..schemas import DeviceIdT
 
 if TYPE_CHECKING:
-    from ..protocol import RamsesProtocol
-    from ..typing import DeviceIdT
+    from ..protocol import RamsesProtocolT
+
+
+from ..const import (
+    DBG_DISABLE_DUTY_CYCLE_LIMIT as DBG_DISABLE_DUTY_CYCLE_LIMIT,
+    DBG_DISABLE_REGEX_WARNINGS as DBG_DISABLE_REGEX_WARNINGS,
+    DBG_FORCE_FRAME_LOGGING as DBG_FORCE_FRAME_LOGGING,
+    DEFAULT_TIMEOUT_MQTT as DEFAULT_TIMEOUT_MQTT,
+    DEFAULT_TIMEOUT_PORT as DEFAULT_TIMEOUT_PORT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -214,21 +223,8 @@ def track_system_syncs[F: Callable[..., Any]](fnc: F) -> F:
 class RamsesTransport(asyncio.Transport):
     """Public Base class for all RAMSES-II transports."""
 
-    def __init__(self, protocol: Any, *args: Any, **kwargs: Any) -> None:
-        self._protocol = protocol
-        self._sync_cycles: deque[Packet] = deque(maxlen=_MAX_TRACKED_SYNCS)
-
-        extra = kwargs.get("extra")
-        kwargs.pop("loop", None)
-        super().__init__(extra=extra)
-
-    def _dt_now(self) -> dt:
-        """Return the current datetime (overridden by subclasses)."""
-        return dt.now()
-
-    async def write_frame(self, frame: str, disable_tx_limits: bool = False) -> None:
-        """Write a frame to the transport."""
-        raise NotImplementedError
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
 
 
 class _ReadTransport(RamsesTransport):
@@ -245,8 +241,7 @@ class _ReadTransport(RamsesTransport):
         extra: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        self._loop = kwargs.pop("loop", None) or asyncio.get_running_loop()
-        super().__init__(protocol, *args, **kwargs)
+        super().__init__(*args, loop=kwargs.pop("loop", None))
 
         self._extra: dict[str, Any] = {} if extra is None else extra
         self._evofw_flag = kwargs.pop(SZ_EVOFW_FLAG, None)

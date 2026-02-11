@@ -73,6 +73,7 @@ from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
 
 if TYPE_CHECKING:
     from ramses_tx import DeviceIdT, DeviceListT, RamsesTransport
+    from ramses_tx import DeviceIdT, DeviceListT, RamsesTransport
 
     from .device import Device
     from .entity_base import Parent
@@ -105,8 +106,8 @@ class Gateway(Engine):
         enforce_known_list: bool = False,
         block_list: DeviceListT | None = None,
         known_list: DeviceListT | None = None,
-        packet_log: PktLogConfigT | None = None,
-        port_config: PortConfigT | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        transport_constructor: Callable[..., Awaitable[RamsesTransport]] | None = None,
         hgi_id: str | None = None,
         sqlite_index: bool = False,
         log_all_mqtt: bool = False,
@@ -120,29 +121,28 @@ class Gateway(Engine):
     ) -> None:
         """Initialize the Gateway instance.
 
-        :param port_name: The serial port name (e.g., '/dev/ttyUSB0') or None.
-        :param input_file: Path to a packet log file, defaults to None.
-        :param disable_discovery: If True, discovery is disabled.
-        :param enable_eavesdrop: If True, eavesdropping is enabled (use with caution).
-        :param reduce_processing: Level of processing reduction.
-        :param disable_sending: If True, the gateway will not transmit.
-        :param disable_qos: If True, QoS (retransmits) is disabled.
-        :param enforce_known_list: If True, strictly filter based on known_list.
-        :param block_list: A list of device IDs to block/ignore.
-        :param known_list: A list of known device IDs and their traits.
-        :param packet_log: Configuration for packet logging.
-        :param port_config: Configuration dictionary for the serial port.
-        :param hgi_id: The Device ID to use for the HGI (gateway).
-        :param sqlite_index: If True, use SQLite indexing.
-        :param log_all_mqtt: If True, log all MQTT messages.
-        :param loop: The asyncio event loop to use.
-        :param transport_constructor: Factory for creating the transport.
-        :param config: Legacy configuration dictionary (deprecated).
-        :param transport_kwargs: Additional parameters for the transport layer.
+        :param port_name: The serial port name (e.g., '/dev/ttyUSB0') or None if using a file.
+        :type port_name: str | None
+        :param input_file: Path to a packet log file for playback/parsing, defaults to None.
+        :type input_file: str | None, optional
+        :param port_config: Configuration dictionary for the serial port, defaults to None.
+        :type port_config: PortConfigT | None, optional
+        :param packet_log: Configuration for packet logging, defaults to None.
+        :type packet_log: PktLogConfigT | None, optional
+        :param block_list: A list of device IDs to block/ignore, defaults to None.
+        :type block_list: DeviceListT | None, optional
+        :param known_list: A list of known device IDs and their traits, defaults to None.
+        :type known_list: DeviceListT | None, optional
+        :param loop: The asyncio event loop to use, defaults to None.
+        :type loop: asyncio.AbstractEventLoop | None, optional
+        :param transport_constructor: A factory for creating the transport layer, defaults to None.
+        :type transport_constructor: Callable[..., Awaitable[RamsesTransport]] | None, optional
+        :param hgi_id: The Device ID to use for the HGI (gateway), overriding defaults.
+        :type hgi_id: str | None, optional
+        :param kwargs: Additional configuration parameters passed to the engine and schema.
+        :type kwargs: Any
         """
-
-        # 1. Handle Legacy arguments
-        if transport_kwargs.pop("debug_mode", None):
+        if kwargs.pop("debug_mode", None):
             _LOGGER.setLevel(logging.DEBUG)
 
         if config:

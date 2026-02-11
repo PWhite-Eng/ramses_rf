@@ -15,6 +15,7 @@ from .base import _ReadTransport
 
 if TYPE_CHECKING:
     from ..protocol import RamsesProtocol
+    from ..protocol import RamsesProtocol
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,8 +36,6 @@ class _FileTransportAbstractor:
 
 class FileTransport(_ReadTransport, _FileTransportAbstractor):
     """Receive packets from a read-only source such as packet log or a dict."""
-
-    _count: int = 0
 
     def __init__(
         self,
@@ -80,12 +79,13 @@ class FileTransport(_ReadTransport, _FileTransportAbstractor):
             if not self._closing:
                 run_exc = exc.TransportError("Reader task was cancelled")
         except Exception as err:
-            run_exc = err
-        finally:
-            if not self._closing:
-                self.loop.call_soon_threadsafe(
-                    functools.partial(self._protocol.connection_lost, run_exc)
-                )
+            self.loop.call_soon_threadsafe(
+                functools.partial(self._protocol.connection_lost, err)
+            )
+        else:
+            self.loop.call_soon_threadsafe(
+                functools.partial(self._protocol.connection_lost, None)
+            )
 
     def pause_reading(self) -> None:
         self._reading = False

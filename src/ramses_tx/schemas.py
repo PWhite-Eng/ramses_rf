@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any, Never, TypeVar
+from typing import Any, Final, Never, TypedDict, TypeVar
 
 import voluptuous as vol
 
@@ -38,7 +38,7 @@ from .const import (
     SZ_TIMEOUT,
     SZ_XONXOFF,
 )
-from .typing import DeviceListT, PktLogConfigT, PortConfigT
+from .typing import DeviceListT
 
 _LOGGER = logging.getLogger(__name__)
 

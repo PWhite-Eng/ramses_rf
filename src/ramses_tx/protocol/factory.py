@@ -6,8 +6,9 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from ..const import DEFAULT_DISABLE_QOS, SZ_PORT_NAME
+from ..const import DEFAULT_DISABLE_QOS
 from ..logger import set_logger_timesource
+from ..schemas import SZ_PORT_NAME
 from ..transports import transport_factory
 from .protocol import RamsesProtocol
 

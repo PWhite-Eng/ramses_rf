@@ -7,26 +7,20 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Final
 
 from . import exceptions as exc
-from .const import DEV_TYPE_MAP, DEVICE_ID_REGEX
+from .const import DEV_TYPE_MAP as _DEV_TYPE_MAP, DEVICE_ID_REGEX, DevType
+from .typing import DeviceIdT
 
 if TYPE_CHECKING:
     from .typing import DeviceIdT
 
 
-# --- REGRESSION CONFIGURATION -----------------------------------------------
-# Block specific Device IDs known to be "Time Travellers" or Test Equipment
-# in the regression suite. These emit valid packets but with future timestamps
-# (e.g. 2024, 2026) that cause the Gateway clock to jump, expiring all real data.
-EXCLUDE_DEVICE_IDS: Final[set[str]] = set()
-# EXCLUDE_DEVICE_IDS: Final[set[str]] = {
-#     "00:000001",  # Test device (2026 timestamp)
-#     "03:201565",  # Future data (2024)
-#     "10:033995",  # Future data (2024)
-#     "10:048456",  # Future data (2024)
-# }
-# Note: "37:029632" (Manchester) is NOT blacklisted here. It is handled by
-# strict Packet validation (length mismatch) in packet.py.
-# ----------------------------------------------------------------------------
+DEVICE_LOOKUP: dict[str, str] = {
+    k: _DEV_TYPE_MAP._hex(k)
+    for k in _DEV_TYPE_MAP.SLUGS
+    if k not in (DevType.JIM, DevType.JST)
+}
+DEVICE_LOOKUP |= {"NUL": "63", "---": "--"}
+DEV_TYPE_MAP: dict[str, str] = {v: k for k, v in DEVICE_LOOKUP.items()}
 
 
 HGI_DEVICE_ID: DeviceIdT = "18:000730"  # type: ignore[assignment]

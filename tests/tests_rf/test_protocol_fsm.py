@@ -27,7 +27,6 @@ from ramses_tx.protocol.fsm import (
     _ProtocolState,
 )
 from ramses_tx.transports import transport_factory
-from ramses_tx.typing import QosParams
 
 from .virtual_rf import VirtualRf
 
