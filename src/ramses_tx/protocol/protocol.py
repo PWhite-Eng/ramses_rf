@@ -41,7 +41,11 @@ TIP = f", configure the {SZ_KNOWN_LIST}/{SZ_BLOCK_LIST} as required"
 
 
 class RamsesProtocol(asyncio.Protocol, IPacketSender):
-    """Network Protocol for RAMSES RF."""
+    """Network Protocol for RAMSES RF.
+
+    This protocol handles the translation between raw transport data and
+    domain-specific RAMSES RF objects (Packets/Messages).
+    """
 
     def __init__(
         self,
@@ -53,6 +57,15 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
         exclude_list: DeviceListT | None = None,
         include_list: DeviceListT | None = None,
     ) -> None:
+        """Initialize the RAMSES Protocol.
+
+        :param msg_handler: The primary callback for incoming messages.
+        :param disable_qos: If True, disables Quality of Service retries.
+        :param disable_sending: If True, blocks all outbound transmissions.
+        :param enforce_include_list: If True, drops packets from unknown devices.
+        :param exclude_list: Dictionary of explicitly blocked devices.
+        :param include_list: Dictionary of explicitly allowed devices.
+        """
         self._msg_handler = msg_handler
         self._msg_handlers: list[MsgHandlerT] = []
 
@@ -67,6 +80,9 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
 
         self._transport: RamsesTransport | None = None
         self._loop = asyncio.get_running_loop()
+
+        # Keep strong references to background tasks to prevent GC deletion
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
         self._context = ProtocolContext(self)
 
@@ -108,7 +124,9 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
     ) -> Callable[[], None]:
         """Add a Message handler to the list of such callbacks.
 
-        Returns a callback that can be used to subsequently remove the Message handler.
+        :param msg_handler: The callback function to execute.
+        :param msg_filter: Optional filter to restrict which messages are handled.
+        :return: A callback function that unregisters this handler when executed.
         """
 
         def del_handler() -> None:
@@ -121,7 +139,10 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
         return del_handler
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
-        """Called when the connection to the Transport is established."""
+        """Called when the connection to the Transport is established.
+
+        :param transport: The base transport establishing the connection.
+        """
         if self._wait_connection_made.done():
             return
 
@@ -144,7 +165,12 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
         _LOGGER.info(f"Protocol: Connection made: {transport}")
 
     async def wait_for_connection_made(self, timeout: float = 1.0) -> RamsesTransport:
-        """Wait until connection_made() has been invoked."""
+        """Wait until connection_made() has been invoked.
+
+        :param timeout: Time in seconds to wait before raising TimeoutError.
+        :return: The connected RamsesTransport instance.
+        :raises exc.TransportError: If the connection is not established in time.
+        """
         try:
             return await asyncio.wait_for(self._wait_connection_made, timeout)
         except TimeoutError as err:
@@ -153,7 +179,10 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
             ) from err
 
     def connection_lost(self, exc: Exception | None) -> None:
-        """Called when the connection to the Transport is lost."""
+        """Called when the connection to the Transport is lost.
+
+        :param exc: The exception causing the disconnect, or None if intended.
+        """
         if not self._wait_connection_lost:
             # Handle cases where connection was never fully established
             if self._wait_connection_made.done():
@@ -177,7 +206,11 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
             _LOGGER.info("Protocol: Connection lost")
 
     async def wait_for_connection_lost(self, timeout: float = 1.0) -> None:
-        """Wait until connection_lost() has been invoked."""
+        """Wait until connection_lost() has been invoked.
+
+        :param timeout: Time in seconds to wait before raising TimeoutError.
+        :raises exc.TransportError: If the disconnect does not complete in time.
+        """
         if not self._wait_connection_lost:
             return
 
@@ -199,7 +232,10 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
         self._context.resume_writing()
 
     def pkt_received(self, pkt: Packet) -> None:
-        """Called by the Transport when a Packet is received."""
+        """Called by the Transport when a Packet is received.
+
+        :param pkt: The parsed Packet received from the transport.
+        """
         if not self._is_wanted_addrs(pkt.src.id, pkt.dst.id):
             _LOGGER.debug("%s < Packet excluded by device_id filter", pkt)
             return
@@ -235,7 +271,17 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
         priority: Priority = Priority.DEFAULT,
         qos: QosParams | dict[str, Any] | None = None,
     ) -> Packet:
-        """Send a Command with Qos (retries, etc.)."""
+        """Send a Command with Qos (retries, etc.).
+
+        :param cmd: The command to transmit.
+        :param gap_duration: Time to wait between repeats.
+        :param num_repeats: Number of times to repeat the transmission.
+        :param priority: Processing priority for the internal queue.
+        :param qos: Quality of service parameters for delivery assurance.
+        :return: The generated Packet for the transmitted command.
+        :raises RuntimeError: If sending is disabled.
+        :raises exc.ProtocolError: If the target is blocked by configuration.
+        """
         if self._disable_sending:
             raise RuntimeError("Sending is disabled")
 
@@ -264,12 +310,21 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
         return await self._context.send_cmd(cmd, priority=priority, qos=qos)
 
     def send_pkt(self, pkt: Packet | Command) -> None:
-        """Send a packet/command to the transport. Implements IPacketSender."""
+        """Send a packet/command to the transport. Implements IPacketSender.
+
+        :param pkt: The raw Packet or Command to transmit.
+        """
         if self._transport:
-            self._loop.create_task(self._transport.write_frame(str(pkt)))
+            task = self._loop.create_task(self._transport.write_frame(str(pkt)))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
     def _patch_cmd_if_needed(self, cmd: Command) -> Command:
-        """Patch the command with the actual HGI ID if it uses the default placeholder."""
+        """Patch the command with the actual HGI ID if it uses the default.
+
+        :param cmd: The parsed Command potentially requiring modification.
+        :return: The patched Command.
+        """
         if (
             self.hgi_id
             and self._is_evofw3
@@ -284,7 +339,10 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
         return cmd
 
     async def _send_impersonation_alert(self, cmd: Command) -> None:
-        """Send a puzzle packet warning that impersonation is occurring."""
+        """Send a puzzle packet warning that impersonation is occurring.
+
+        :param cmd: The command indicating impersonation.
+        """
         if _DBG_DISABLE_IMPERSONATION_ALERTS:
             return
 
@@ -294,27 +352,36 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
         else:
             _LOGGER.info(msg)
 
+    def _warn_foreign_hgi(self, dev_id: DeviceIdT) -> None:
+        """Warn if an unknown HGI is detected.
+
+        :param dev_id: The identifier of the detected unknown HGI.
+        """
+        current_date = dt.now().date()
+        if self._foreign_last_run != current_date:
+            self._foreign_last_run = current_date
+            self._foreign_gwys_lst = []
+
+        if dev_id in self._foreign_gwys_lst:
+            return
+
+        _LOGGER.warning(
+            f"Device {dev_id} is potentially a Foreign gateway, "
+            f"the Active gateway is {self._active_hgi}, "
+            f"alternatively, is it a HVAC device?{TIP}"
+        )
+        self._foreign_gwys_lst.append(dev_id)
+
     def _is_wanted_addrs(
         self, src_id: DeviceIdT, dst_id: DeviceIdT, sending: bool = False
     ) -> bool:
-        """Return True if the packet is not to be filtered out."""
+        """Return True if the packet is not to be filtered out.
 
-        def warn_foreign_hgi(dev_id: DeviceIdT) -> None:
-            current_date = dt.now().date()
-            if self._foreign_last_run != current_date:
-                self._foreign_last_run = current_date
-                self._foreign_gwys_lst = []
-
-            if dev_id in self._foreign_gwys_lst:
-                return
-
-            _LOGGER.warning(
-                f"Device {dev_id} is potentially a Foreign gateway, "
-                f"the Active gateway is {self._active_hgi}, "
-                f"alternatively, is it a HVAC device?{TIP}"
-            )
-            self._foreign_gwys_lst.append(dev_id)
-
+        :param src_id: Source device ID.
+        :param dst_id: Destination device ID.
+        :param sending: Boolean indicating if the check is for an outbound TX.
+        :return: True if the addresses are permitted.
+        """
         for dev_id in (src_id, dst_id):
             if dev_id in self._exclude_list:
                 return False
@@ -333,7 +400,7 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
 
             if dev_id[:2] == DEV_TYPE_MAP._hex(DevType.HGI):
                 if self._active_hgi:
-                    warn_foreign_hgi(dev_id)
+                    self._warn_foreign_hgi(dev_id)
 
         return True
 
@@ -345,7 +412,13 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
         disable_warnings: bool = False,
         strict_checking: bool = False,
     ) -> DeviceIdT | None:
-        """Return the device_id of the gateway specified in the include_list."""
+        """Return the device_id of the gateway specified in the include_list.
+
+        :param include_list: Dictionary defining permitted hardware.
+        :param disable_warnings: Suppress output for missing hardware.
+        :param strict_checking: Enforce stricter match validation.
+        :return: DeviceID representing the primary HGI, or None.
+        """
         explicit_hgis = [
             k
             for k, v in include_list.items()
@@ -353,12 +426,15 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
         ]
 
         if explicit_hgis:
-            return "DeviceIdT", explicit_hgis[0]  # type: ignore[return-value]
+            return explicit_hgis[0]
 
         return None
 
     def _set_active_hgi(self, dev_id: Any) -> None:
-        """Set the Active Gateway (HGI) device_id."""
+        """Set the Active Gateway (HGI) device_id.
+
+        :param dev_id: Target string Device ID to bind as primary.
+        """
         if not dev_id or self._active_hgi:
             return
 
