@@ -75,7 +75,7 @@ from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
 )
 
 if TYPE_CHECKING:
-    from ramses_tx import DeviceIdT, DeviceListT, RamsesTransportT
+    from ramses_tx import DeviceIdT, DeviceListT, RamsesTransport
 
     from .device import Device
     from .entity_base import Parent
@@ -100,7 +100,7 @@ class Gateway(Engine):
         block_list: DeviceListT | None = None,
         known_list: DeviceListT | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
-        transport_constructor: Callable[..., Awaitable[RamsesTransportT]] | None = None,
+        transport_constructor: Callable[..., Awaitable[RamsesTransport]] | None = None,
         hgi_id: str | None = None,
         **kwargs: Any,
     ) -> None:
@@ -121,7 +121,7 @@ class Gateway(Engine):
         :param loop: The asyncio event loop to use, defaults to None.
         :type loop: asyncio.AbstractEventLoop | None, optional
         :param transport_constructor: A factory for creating the transport layer, defaults to None.
-        :type transport_constructor: Callable[..., Awaitable[RamsesTransportT]] | None, optional
+        :type transport_constructor: Callable[..., Awaitable[RamsesTransport]] | None, optional
         :param hgi_id: The Device ID to use for the HGI (gateway), overriding defaults.
         :type hgi_id: str | None, optional
         :param kwargs: Additional configuration parameters passed to the engine and schema.
@@ -407,7 +407,7 @@ class Gateway(Engine):
             self._prev_msg = None
             self._this_msg = None
 
-        tmp_transport: RamsesTransportT  # mypy hint
+        tmp_transport: RamsesTransport  # mypy hint
 
         _LOGGER.debug("Gateway: Restoring a cached packet log...")
         await self._pause()

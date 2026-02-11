@@ -54,8 +54,8 @@ from .schedule import InnerScheduleT, OuterScheduleT, Schedule
 
 if TYPE_CHECKING:
     from ramses_tx import Packet
-    from ramses_tx.schemas import DeviceIdT, DevIndexT
     from ramses_tx.typed_dicts import PayDictT
+    from ramses_tx.typing import DeviceIdT, DevIndexT
 
     from .heat import Evohome, _MultiZoneT, _StoredHwT
 

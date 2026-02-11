@@ -17,7 +17,7 @@ from ramses_tx.const import (
     FaultType,
 )
 from ramses_tx.helpers import parse_fault_log_entry
-from ramses_tx.schemas import DeviceIdT
+from ramses_tx.typing import DeviceIdT
 
 from ramses_rf.const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
     I_,

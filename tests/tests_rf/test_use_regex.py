@@ -8,9 +8,9 @@ import pytest
 import serial  # type: ignore[import-untyped]
 
 from ramses_rf import Command, Gateway, Packet
-from ramses_tx.protocol import PortProtocol
+from ramses_tx.protocol import RamsesProtocol
 from ramses_tx.schemas import SZ_INBOUND, SZ_OUTBOUND, SZ_USE_REGEX
-from ramses_tx.transports import _str
+from ramses_tx.transports.base import _str
 from tests_rf.virtual_rf import VirtualRf
 
 # other constants
@@ -65,7 +65,9 @@ GWY_CONFIG = {
 
 @pytest.fixture(autouse=True)
 def patches_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("ramses_tx.protocol._DBG_DISABLE_IMPERSONATION_ALERTS", True)
+    monkeypatch.setattr(
+        "ramses_tx.protocol.const._DBG_DISABLE_IMPERSONATION_ALERTS", True
+    )
     monkeypatch.setattr("ramses_tx.const.MIN_INTER_WRITE_GAP", 0)
 
 
@@ -122,7 +124,7 @@ async def test_regex_with_qos() -> None:
     gwy_0 = Gateway(rf.ports[0], **config)
     ser_1 = serial.Serial(rf.ports[1])
 
-    if not isinstance(gwy_0._protocol, PortProtocol) or not gwy_0._protocol._context:
+    if not isinstance(gwy_0._protocol, RamsesProtocol) or not gwy_0._protocol._context:
         await rf.stop()
         pytest.skip("QoS protocol not enabled")
     else:

@@ -25,11 +25,11 @@ from ..const import (
     SZ_IS_EVOFW3,
     SZ_RAMSES_GATEWAY,
 )
-from ..schemas import DeviceIdT
+from ..typing import DeviceIdT
 from .base import DBG_FORCE_FRAME_LOGGING, _FullTransport, _normalise
 
 if TYPE_CHECKING:
-    from ..protocol import RamsesProtocolT
+    from ..protocol import RamsesProtocol
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ class _MqttTransportAbstractor:
     def __init__(
         self,
         broker_url: str,
-        protocol: RamsesProtocolT,
+        protocol: RamsesProtocol,
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         self._broker_url = urlparse(broker_url)
@@ -120,8 +120,15 @@ class _MqttTransportAbstractor:
 class MqttTransport(_FullTransport, _MqttTransportAbstractor):
     """Send/receive packets to/from ramses_esp via MQTT."""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self, broker_url: str, protocol: RamsesProtocol, *args: Any, **kwargs: Any
+    ) -> None:
+        self._broker_url = urlparse(broker_url)
+        self._protocol = protocol
+        self._loop = kwargs.get("loop") or asyncio.get_running_loop()
+
+        # Pass protocol as the first argument to the rest of the MRO chain
+        super().__init__(protocol, *args, **kwargs)
 
         self._username = unquote(self._broker_url.username or "")
         self._password = unquote(self._broker_url.password or "")

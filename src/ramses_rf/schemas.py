@@ -16,6 +16,7 @@ import voluptuous as vol
 # TODO: deprecate re-exporting (via as) in favour of direct imports
 from ramses_tx.const import (
     SZ_ACTUATORS as SZ_ACTUATORS,
+    SZ_BOUND_TO as SZ_BOUND_TO,
     SZ_CONFIG as SZ_CONFIG,
     SZ_DEVICES as SZ_DEVICES,
     SZ_NAME,
@@ -39,7 +40,6 @@ from ramses_tx.schemas import (  # noqa: F401
     SCH_TRAITS as SCH_TRAITS,
     SZ_ALIAS as SZ_ALIAS,
     SZ_BLOCK_LIST,
-    SZ_BOUND_TO as SZ_BOUND_TO,
     SZ_CLASS as SZ_CLASS,
     SZ_DISABLE_SENDING,
     SZ_ENFORCE_KNOWN_LIST,
@@ -47,10 +47,10 @@ from ramses_tx.schemas import (  # noqa: F401
     SZ_KNOWN_LIST as SZ_KNOWN_LIST,
     SZ_PACKET_LOG,
     SZ_SCHEME as SZ_SCHEME,
-    DeviceIdT,
     sch_packet_log_dict_factory,
     select_device_filter_mode,
 )
+from ramses_tx.typing import DeviceIdT
 
 from . import exceptions as exc
 

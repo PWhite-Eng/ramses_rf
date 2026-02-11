@@ -14,9 +14,9 @@ import serial  # type: ignore[import-untyped]
 
 from ramses_rf import Message
 from ramses_tx.const import SZ_ACTIVE_HGI, SZ_IS_EVOFW3, Code
-from ramses_tx.protocol import RamsesProtocolT, create_stack, protocol_factory
-from ramses_tx.schemas import DeviceIdT
-from ramses_tx.transports import RamsesTransportT, transport_factory
+from ramses_tx.protocol import RamsesProtocol, create_stack, protocol_factory
+from ramses_tx.transports import RamsesTransport, transport_factory
+from ramses_tx.typing import DeviceIdT
 
 from .virtual_rf import HgiFwTypes, VirtualRf
 
@@ -24,11 +24,11 @@ from .virtual_rf import HgiFwTypes, VirtualRf
 
 
 async def assert_stack_state(
-    protocol: RamsesProtocolT, transport: RamsesTransportT
+    protocol: RamsesProtocol, transport: RamsesTransport
 ) -> None:
-    assert transport._this_pkt and transport._this_pkt.code == Code._PUZZ
-    assert transport._this_pkt and transport._this_pkt.src.id == GWY_ID
-    assert transport._prev_pkt is None
+    assert transport._this_pkt and transport._this_pkt.code == Code._PUZZ  # type: ignore[attr-defined]
+    assert transport._this_pkt and transport._this_pkt.src.id == GWY_ID  # type: ignore[attr-defined]
+    assert transport._prev_pkt is None  # type: ignore[attr-defined]
 
     assert transport.get_extra_info(SZ_ACTIVE_HGI) == GWY_ID
     assert transport.get_extra_info(SZ_IS_EVOFW3) is True
@@ -57,8 +57,8 @@ async def _test_create_stack(
     include_list: dict[DeviceIdT, dict] | None = None,
     **kwargs: Any,  # TODO: these are for the transport_factory
 ) -> None:
-    protocol: RamsesProtocolT
-    transport: RamsesTransportT
+    protocol: RamsesProtocol
+    transport: RamsesTransport
 
     protocol, transport = await create_stack(
         _msg_handler,
@@ -72,8 +72,8 @@ async def _test_create_stack(
 
     try:
         await assert_stack_state(protocol, transport)
-    except serial.SerialException as err:
-        transport._close(exc=err)
+    except serial.SerialException:
+        transport.close()
         raise
     except (AssertionError, asyncio.InvalidStateError, TimeoutError):
         transport.close()
@@ -95,7 +95,7 @@ async def _test_factories(
     include_list: dict[DeviceIdT, dict] | None = None,
     **kwargs: Any,  # TODO: these are for the transport_factory
 ) -> None:
-    protocol: RamsesProtocolT = protocol_factory(
+    protocol: RamsesProtocol = protocol_factory(
         _msg_handler,
         disable_qos=disable_qos,
         disable_sending=disable_sending,
@@ -103,7 +103,7 @@ async def _test_factories(
         exclude_list=exclude_list,
         include_list=include_list,
     )
-    transport: RamsesTransportT = await transport_factory(
+    transport: RamsesTransport = await transport_factory(
         protocol,
         disable_sending=disable_sending,
         **kwargs,
@@ -111,8 +111,8 @@ async def _test_factories(
 
     try:
         await assert_stack_state(protocol, transport)
-    except serial.SerialException as err:
-        transport._close(exc=err)
+    except serial.SerialException:
+        transport.close()
         raise
     except (AssertionError, asyncio.InvalidStateError, TimeoutError):
         transport.close()

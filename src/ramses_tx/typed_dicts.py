@@ -4,7 +4,7 @@ from enum import EnumCheck, StrEnum, verify
 from typing import Literal, NotRequired, TypeAlias, TypedDict
 
 from ramses_tx.const import FaultDeviceClass, FaultState, FaultType
-from ramses_tx.schemas import DeviceIdT
+from ramses_tx.typing import DeviceIdT
 
 _HexToTempT: TypeAlias = float | None
 

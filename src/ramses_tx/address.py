@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Final
 
 from . import exceptions as exc
 from .const import DEV_TYPE_MAP as _DEV_TYPE_MAP, DEVICE_ID_REGEX, DevType
-from .schemas import DeviceIdT
+from .typing import DeviceIdT
 
 if TYPE_CHECKING:
-    from .schemas import DeviceIdT
+    from .typing import DeviceIdT
 
 
 DEVICE_LOOKUP: dict[str, str] = {

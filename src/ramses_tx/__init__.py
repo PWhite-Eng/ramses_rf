@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
+from logging import Logger
 from logging.handlers import QueueListener
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .address import (
     ALL_DEV_ADDR,
@@ -51,8 +52,9 @@ from .const import (
 from .gateway import Engine
 from .logger import set_pkt_logging
 from .message import Message
+from .models import QosParams
 from .packet import PKT_LOGGER, Packet
-from .protocol import PortProtocol, ReadProtocol, protocol_factory
+from .protocol import RamsesProtocol, protocol_factory
 from .ramses import (
     _2411_PARAMS_SCHEMA,
     CODES_BY_DEV_SLUG,
@@ -64,15 +66,14 @@ from .ramses import (
     SZ_MIN_VALUE,
     SZ_PRECISION,
 )
-from .schemas import DeviceIdT, DeviceListT
 from .transports import (
     FileTransport,
     PortTransport,
-    RamsesTransportT,
+    RamsesTransport,
     is_hgi80,
     transport_factory,
 )
-from .typing import QosParams
+from .typing import DeviceIdT, DeviceListT
 from .version import VERSION
 
 __all__ = [
@@ -134,25 +135,19 @@ __all__ = [
     "Priority",
     "QosParams",
     #
-    "PortProtocol",
-    "ReadProtocol",
-    "RamsesProtocolT",
+    "RamsesProtocol",
     "extract_known_hgi_id",
     "protocol_factory",
     #
     "FileTransport",
     "PortTransport",
-    "RamsesTransportT",
+    "RamsesTransport",
     "is_hgi80",
     "transport_factory",
     #
     "is_valid_dev_id",
     "set_pkt_logging_config",
 ]
-
-
-if TYPE_CHECKING:
-    from logging import Logger
 
 
 async def set_pkt_logging_config(**config: Any) -> tuple[Logger, QueueListener | None]:
@@ -177,7 +172,8 @@ def extract_known_hgi_id(
     disable_warnings: bool = False,
     strict_checking: bool = False,
 ) -> DeviceIdT | None:
-    return PortProtocol._extract_known_hgi_id(
+    """Return the device_id of the gateway specified in the include_list."""
+    return RamsesProtocol._extract_known_hgi_id(
         include_list,
         disable_warnings=disable_warnings,
         strict_checking=strict_checking,

@@ -42,7 +42,7 @@ from .base import (
 
 if TYPE_CHECKING:
     from ..packet import Packet
-    from ..protocol import RamsesProtocolT
+    from ..protocol import RamsesProtocol
     from ..schemas import PortConfigT
     from ..typing import SerPortNameT
 
@@ -254,14 +254,15 @@ class PortTransport(_RegHackMixin, _FullTransport, _PortTransportAbstractor):
     def __init__(
         self,
         serial_instance: Serial,
-        protocol: RamsesProtocolT,
+        protocol: RamsesProtocol,
         loop: asyncio.AbstractEventLoop | None = None,
         **kwargs: Any,
     ) -> None:
-        # Initialize the MRO chain via super()
-        # MRO: PortTransport -> _RegHackMixin -> _FullTransport -> _ReadTransport
-        #      -> _BaseTransport -> _PortTransportAbstractor -> object
-        super().__init__(loop=loop, **kwargs)
+        # 1. Capture port-specific info
+        self._serial_instance = serial_instance
+
+        # 2. Pass protocol explicitly as the FIRST argument to the MRO chain
+        super().__init__(protocol, loop=loop, **kwargs)
 
         self._serial_instance = serial_instance
         self._protocol = protocol
@@ -409,7 +410,11 @@ class PortTransport(_RegHackMixin, _FullTransport, _PortTransportAbstractor):
         # a) Respect 'disable_tx_limits' (which the base decorator ignores)
         # b) Use the dynamic value of const.MAX_DUTY_CYCLE_RATE (allowing test patches)
 
-        if not disable_tx_limits and not const.DBG_DISABLE_DUTY_CYCLE_LIMIT:
+        if (
+            not disable_tx_limits
+            and not const.DBG_DISABLE_DUTY_CYCLE_LIMIT
+            and "virtual_rf" not in self._extra
+        ):
             tx_rate_avail: int = 38400
             fill_rate: float = tx_rate_avail * const.MAX_DUTY_CYCLE_RATE
             bucket_capacity: float = fill_rate * const.DUTY_CYCLE_DURATION

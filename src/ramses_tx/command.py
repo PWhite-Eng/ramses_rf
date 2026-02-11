@@ -86,7 +86,7 @@ from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
 if TYPE_CHECKING:
     from .const import VerbT
     from .frame import HeaderT, PayloadT
-    from .schemas import DeviceIdT
+    from .typing import DeviceIdT
 
 
 COMMAND_FORMAT = "{:<2} {} {} {} {} {} {:03d} {}"

@@ -11,12 +11,12 @@ from unittest.mock import patch
 import pytest
 
 from ramses_rf import Command, Gateway
-from ramses_tx import exceptions as exc
 from ramses_tx.address import HGI_DEVICE_ID, Address
-from ramses_tx.protocol import PortProtocol
-from ramses_tx.schemas import DeviceIdT
+from ramses_tx.models import QosParams
+from ramses_tx.protocol import RamsesProtocol
+from ramses_tx.protocol.exceptions import ProtocolSendFailed
 from ramses_tx.transports import MqttTransport
-from ramses_tx.typing import QosParams
+from ramses_tx.typing import DeviceIdT
 
 from .conftest import _GwyConfigDictT
 
@@ -87,7 +87,7 @@ async def _test_gwy_device(gwy: Gateway, test_idx: int) -> None:
 
     assert gwy._loop is asyncio.get_running_loop()  # scope BUG is here
 
-    if not isinstance(gwy._protocol, PortProtocol) or not gwy._protocol._context:
+    if not isinstance(gwy._protocol, RamsesProtocol) or not gwy._protocol._context:
         assert False, "QoS protocol not enabled"  # use assert, not skip
 
     assert gwy.hgi  # mypy
@@ -118,7 +118,7 @@ async def _test_gwy_device(gwy: Gateway, test_idx: int) -> None:
         pkt = await gwy._protocol.send_cmd(
             cmd, qos=QosParams(wait_for_reply=False, timeout=timeout)
         )  # for this test, we only need the cmd echo
-    except exc.ProtocolSendFailed:
+    except ProtocolSendFailed:
         if is_hgi80 and cmd_str[7:16] != HGI_DEVICE_ID:
             return  # should have failed, and has
         raise  # should not have failed, but has!

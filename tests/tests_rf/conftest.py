@@ -16,7 +16,7 @@ from ramses_rf import Gateway
 from ramses_rf.device import HgiGateway
 from ramses_tx import exceptions as exc
 from ramses_tx.address import HGI_DEVICE_ID
-from ramses_tx.schemas import DeviceIdT
+from ramses_tx.typing import DeviceIdT
 from tests_rf.virtual_rf import HgiFwTypes, VirtualRf
 
 #
@@ -56,7 +56,9 @@ _global_failed_ports: list[str] = []
 
 @pytest.fixture(autouse=True)
 def patches_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("ramses_tx.protocol._DBG_DISABLE_IMPERSONATION_ALERTS", True)
+    monkeypatch.setattr(
+        "ramses_tx.protocol.const._DBG_DISABLE_IMPERSONATION_ALERTS", True
+    )
     monkeypatch.setattr("ramses_tx.const.DBG_DISABLE_DUTY_CYCLE_LIMIT", True)
     monkeypatch.setattr("ramses_tx.const.MIN_INTER_WRITE_GAP", 0)
 
@@ -194,7 +196,7 @@ async def _fake_gateway(
         gwy = await _gateway(gwy_port, gwy_config)
 
     assert gwy._transport  # mypy
-    gwy._transport._extra["virtual_rf"] = rf
+    gwy._transport._extra["virtual_rf"] = rf  # type: ignore[attr-defined]
     return gwy
 
 

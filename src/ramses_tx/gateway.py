@@ -27,6 +27,7 @@ from .const import (
     Priority,
 )
 from .message import Message
+from .models import QosParams
 from .packet import Packet
 from .protocol import protocol_factory
 from .schemas import (
@@ -43,7 +44,6 @@ from .schemas import (
     select_device_filter_mode,
 )
 from .transports import transport_factory
-from .typing import QosParams
 
 from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
     I_,
@@ -56,9 +56,9 @@ from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
 if TYPE_CHECKING:
     from .const import VerbT
     from .frame import PayloadT
-    from .protocol import RamsesProtocolT
-    from .schemas import DeviceIdT, DeviceListT
-    from .transports import RamsesTransportT
+    from .protocol import RamsesProtocol
+    from .transports import RamsesTransport
+    from .typing import DeviceIdT, DeviceListT
 
 _MsgHandlerT = Callable[[Message], None]
 
@@ -129,8 +129,8 @@ class Engine:
             tuple[_MsgHandlerT | None, bool | None, *tuple[Any, ...]] | None
         ) = None
 
-        self._protocol: RamsesProtocolT = None  # type: ignore[assignment]
-        self._transport: RamsesTransportT | None = None  # None until self.start()
+        self._protocol: RamsesProtocol
+        self._transport: RamsesTransport | None = None  # None until self.start()
 
         self._prev_msg: Message | None = None
         self._this_msg: Message | None = None

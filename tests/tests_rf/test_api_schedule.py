@@ -10,8 +10,8 @@ from ramses_rf.device import Controller
 from ramses_rf.system import Evohome, Zone
 from ramses_rf.system.schedule import InnerScheduleT
 from ramses_tx.address import HGI_DEVICE_ID, Address
-from ramses_tx.protocol import PortProtocol
-from ramses_tx.schemas import DeviceIdT
+from ramses_tx.protocol import RamsesProtocol
+from ramses_tx.typing import DeviceIdT
 
 from .conftest import _GwyConfigDictT
 from .virtual_rf import VirtualRf
@@ -49,7 +49,7 @@ async def _test_get_schedule(gwy: Gateway, ctl_id: DeviceIdT, idx: str) -> None:
     """Test obtaining the version and schedule."""
 
     assert gwy._loop is asyncio.get_running_loop()  # scope BUG is here
-    assert isinstance(gwy._protocol, PortProtocol)  # mypy
+    assert isinstance(gwy._protocol, RamsesProtocol)  # mypy
     assert gwy._protocol._disable_qos is False  # QoS is required for this test
 
     _: Controller = gwy.get_device(ctl_id)  # type: ignore[assignment]

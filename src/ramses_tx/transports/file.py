@@ -14,7 +14,7 @@ from ..const import SZ_READER_TASK
 from .base import _ReadTransport
 
 if TYPE_CHECKING:
-    from ..protocol import RamsesProtocolT
+    from ..protocol import RamsesProtocol
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class _FileTransportAbstractor:
     def __init__(
         self,
         pkt_source: dict[str, str] | str | TextIOWrapper,
-        protocol: RamsesProtocolT,
+        protocol: RamsesProtocol,
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         self._pkt_source = pkt_source
@@ -36,8 +36,21 @@ class _FileTransportAbstractor:
 class FileTransport(_ReadTransport, _FileTransportAbstractor):
     """Receive packets from a read-only source such as packet log or a dict."""
 
-    def __init__(self, *args: Any, disable_sending: bool = True, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        pkt_source: Any,
+        protocol: RamsesProtocol,
+        *args: Any,
+        disable_sending: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        # 1. Manually set the source
+        self._pkt_source = pkt_source
+        self._protocol = protocol
+        self._loop = kwargs.get("loop") or asyncio.get_running_loop()
+
+        # 2. Pass protocol as the FIRST argument to _ReadTransport
+        super().__init__(protocol, *args, **kwargs)
 
         if bool(disable_sending) is False:
             raise exc.TransportSourceInvalid("This Transport cannot send packets")
@@ -58,7 +71,7 @@ class FileTransport(_ReadTransport, _FileTransportAbstractor):
             await self._producer_loop()
         except Exception as err:
             self.loop.call_soon_threadsafe(
-                functools.partial(self._protocol.connection_lost, err)  # type: ignore[arg-type]
+                functools.partial(self._protocol.connection_lost, err)
             )
         else:
             self.loop.call_soon_threadsafe(

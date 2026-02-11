@@ -12,7 +12,7 @@ from ..helpers import dt_now
 from .base import _FullTransport
 
 if TYPE_CHECKING:
-    from ..protocol import RamsesProtocolT
+    from ..protocol import RamsesProtocol
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,20 +38,20 @@ class CallbackTransport(_FullTransport, _CallbackTransportAbstractor):
 
     def __init__(
         self,
-        protocol: RamsesProtocolT,
+        protocol: RamsesProtocol,
         io_writer: Callable[[str], Awaitable[None]],
         disable_sending: bool = False,
         autostart: bool = False,
         **kwargs: Any,
     ) -> None:
-        super().__init__(disable_sending=disable_sending, **kwargs)
+        super().__init__(protocol, disable_sending=disable_sending, **kwargs)
 
         self._protocol = protocol
         self._io_writer = io_writer
         self._reading = False
 
         _LOGGER.info(f"CallbackTransport created with io_writer={io_writer}")
-        self._protocol.connection_made(self, ramses=True)
+        self._protocol.connection_made(self)
 
         if autostart:
             self.resume_reading()

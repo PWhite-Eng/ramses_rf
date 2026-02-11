@@ -1,0 +1,28 @@
+"""RAMSES RF - Protocol constants."""
+
+from typing import Final
+
+from ..const import (
+    DEFAULT_BUFFER_SIZE as DEFAULT_BUFFER_SIZE,
+    DEFAULT_DISABLE_QOS as DEFAULT_DISABLE_QOS,
+    DEFAULT_ECHO_TIMEOUT as DEFAULT_ECHO_TIMEOUT,
+    DEFAULT_GAP_DURATION as DEFAULT_GAP_DURATION,
+    DEFAULT_NUM_REPEATS as DEFAULT_NUM_REPEATS,
+    DEFAULT_RPLY_TIMEOUT as DEFAULT_RPLY_TIMEOUT,
+    MAX_RETRY_LIMIT as MAX_RETRY_LIMIT,
+    MAX_SEND_TIMEOUT as MAX_SEND_TIMEOUT,
+    Priority as Priority,
+)
+
+# Debug flags: Protocol
+_DBG_DISABLE_IMPERSONATION_ALERTS: Final[bool] = False
+_DBG_DISABLE_QOS: Final[bool] = False
+_DBG_FORCE_LOG_PACKETS: Final[bool] = False
+
+# Debug flags: FSM
+_DBG_MAINTAIN_STATE_CHAIN: Final[bool] = False
+_DBG_USE_STRICT_TRANSITIONS: Final[bool] = False
+
+# Defaults
+DEFAULT_PRIORITY: Final[int] = 0  # Priority.DEFAULT
+DEFAULT_WAIT_FOR_REPLY: Final[bool] = False

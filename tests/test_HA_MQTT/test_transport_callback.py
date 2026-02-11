@@ -84,7 +84,7 @@ class TestCallbackTransport(unittest.IsolatedAsyncioTestCase):
 
             # 2. Manually signal that the connection is made.
             # MUST include ramses=True to satisfy the protocol stack
-            protocol.connection_made(self.transport, ramses=True)
+            protocol.connection_made(self.transport)
 
             return self.transport
 
@@ -116,7 +116,7 @@ class TestCallbackTransport(unittest.IsolatedAsyncioTestCase):
 
             # We must tell the protocol we are connected, or gwy.start() will timeout
             transport._extra["active_hgi"] = "18:000730"
-            protocol.connection_made(transport, ramses=True)
+            protocol.connection_made(transport)
 
             return transport
 

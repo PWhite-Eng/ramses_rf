@@ -31,10 +31,10 @@ from ..const import (
 )
 from ..helpers import dt_now
 from ..packet import Packet
-from ..schemas import DeviceIdT
+from ..typing import DeviceIdT
 
 if TYPE_CHECKING:
-    from ..protocol import RamsesProtocolT
+    from ..protocol import RamsesProtocol
 
 
 from ..const import (
@@ -197,24 +197,50 @@ def track_system_syncs(fnc: Callable[..., None]) -> Callable[..., Any]:
     return wrapper
 
 
-class _BaseTransport:
-    """Base class for all transports."""
+class RamsesTransport(asyncio.Transport):
+    """Public Base class for all RAMSES-II transports."""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, protocol: Any, *args: Any, **kwargs: Any) -> None:
+        # 1. Store the protocol locally
+        self._protocol = protocol
+
+        # 2. Extract 'extra' if it exists, as it's all BaseTransport wants
+        extra = kwargs.get("extra")
+
+        # 3. Strip 'loop' out of kwargs as it crashes BaseTransport
+        kwargs.pop("loop", None)
+
+        # 4. ONLY pass 'extra' to the standard asyncio.Transport
+        super().__init__(extra=extra)
+
+    def _dt_now(self) -> dt:
+        """Return the current datetime (overridden by subclasses)."""
+        return dt.now()
+
+    async def write_frame(self, frame: str, disable_tx_limits: bool = False) -> None:
+        """Write a frame to the transport."""
+        raise NotImplementedError
 
 
-class _ReadTransport(_BaseTransport):
+class _ReadTransport(RamsesTransport):
     """Interface for read-only transports."""
 
-    _protocol: RamsesProtocolT = None  # type: ignore[assignment]
+    _protocol: RamsesProtocol = None  # type: ignore[assignment]
     _loop: asyncio.AbstractEventLoop
     _is_hgi80: bool | None = None
 
     def __init__(
-        self, *args: Any, extra: dict[str, Any] | None = None, **kwargs: Any
+        self,
+        protocol: Any,
+        *args: Any,
+        extra: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
-        super().__init__(*args, loop=kwargs.pop("loop", None))
+        # 1. Safely extract loop for our own use
+        self._loop = kwargs.pop("loop", None) or asyncio.get_running_loop()
+
+        # 2. Pass protocol explicitly as the first argument to RamsesTransport
+        super().__init__(protocol, *args, **kwargs)
 
         self._extra: dict[str, Any] = {} if extra is None else extra
         self._evofw_flag = kwargs.pop(SZ_EVOFW_FLAG, None)
@@ -252,7 +278,7 @@ class _ReadTransport(_BaseTransport):
             return
         self._closing = True
         self.loop.call_soon_threadsafe(
-            functools.partial(self._protocol.connection_lost, exc)  # type: ignore[arg-type]
+            functools.partial(self._protocol.connection_lost, exc)
         )
 
     def close(self) -> None:
@@ -270,7 +296,7 @@ class _ReadTransport(_BaseTransport):
     def _make_connection(self, gwy_id: DeviceIdT | None) -> None:
         self._extra[SZ_ACTIVE_HGI] = gwy_id
         self.loop.call_soon_threadsafe(
-            functools.partial(self._protocol.connection_made, self, ramses=True)  # type: ignore[arg-type]
+            functools.partial(self._protocol.connection_made, self)
         )
 
     def _frame_read(self, dtm_str: str, frame: str) -> None:

@@ -40,57 +40,51 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any
 
 from .. import exceptions as exc
 from ..const import DEFAULT_TIMEOUT_MQTT, DEFAULT_TIMEOUT_PORT
-from .base import _str
+from .base import RamsesTransport
 from .file import FileTransport
 from .ip import CallbackTransport
 from .mqtt import MqttTransport
-from .serial import PortTransport, comports as comports, create_serial_port, is_hgi80
+from .serial import PortTransport, comports, create_serial_port, is_hgi80
 
 if TYPE_CHECKING:
-    from ..protocol import RamsesProtocolT
+    from ..protocol import RamsesProtocol
     from ..schemas import PortConfigT
     from ..typing import SerPortNameT
 
 
 _LOGGER = logging.getLogger(__name__)
 
-RamsesTransportT: TypeAlias = (
-    FileTransport | MqttTransport | PortTransport | CallbackTransport
-)
-
 __all__ = [
     "CallbackTransport",
     "FileTransport",
     "MqttTransport",
     "PortTransport",
-    "RamsesTransportT",
+    "RamsesTransport",
     "is_hgi80",
     "transport_factory",
-    "_str",
-    "serial_for_url",
     "comports",
 ]
 
 
 async def transport_factory(
-    protocol: RamsesProtocolT,
+    protocol: RamsesProtocol,
     /,
     *,
     port_name: SerPortNameT | None = None,
     port_config: PortConfigT | None = None,
     packet_log: str | None = None,
     packet_dict: dict[str, str] | None = None,
-    transport_constructor: Callable[..., Awaitable[RamsesTransportT]] | None = None,
+    transport_constructor: Callable[..., Awaitable[RamsesTransport]] | None = None,
     disable_sending: bool = False,
     extra: dict[str, Any] | None = None,
     loop: asyncio.AbstractEventLoop | None = None,
     log_all: bool = False,
     **kwargs: Any,
-) -> RamsesTransportT:
+) -> RamsesTransport:
     """Create and return a Ramses-specific async packet Transport."""
 
     # Extract autostart (default to False if missing), used in transport_constructor only

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any, Final, Never, NewType, TypeAlias, TypedDict, TypeVar
+from typing import Any, Final, Never, TypedDict, TypeVar
 
 import voluptuous as vol
 
@@ -26,6 +26,7 @@ from .const import (
     SZ_SERIAL_PORT,
     SZ_SERIAL_PORT_CONFIG as SZ_SERIAL_PORT_CONFIG,
 )
+from .typing import DeviceListT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -246,16 +247,6 @@ _SCH_TRAITS_DOMAINS = ("heat", "hvac")
 _SCH_TRAITS_HVAC_SCHEMES = ("itho", "nuaire", "orcon", "vasco", "climarad")
 
 
-DeviceTraitsT = TypedDict(
-    "DeviceTraitsT",
-    {
-        "alias": str | None,
-        "faked": bool | None,
-        "class": str | None,
-    },
-)
-
-
 def sch_global_traits_dict_factory(
     heat_traits: dict[vol.Optional, vol.Any] | None = None,
     hvac_traits: dict[vol.Optional, vol.Any] | None = None,
@@ -346,13 +337,6 @@ def sch_global_traits_dict_factory(
 
 
 SCH_GLOBAL_TRAITS_DICT, SCH_TRAITS = sch_global_traits_dict_factory()
-
-#
-# Device lists (Engine configuration)
-
-DeviceIdT = NewType("DeviceIdT", str)  # TypeVar('DeviceIdT', bound=str)  #
-DevIndexT = NewType("DevIndexT", str)
-DeviceListT: TypeAlias = dict[DeviceIdT, DeviceTraitsT]
 
 
 def select_device_filter_mode(

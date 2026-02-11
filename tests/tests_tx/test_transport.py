@@ -24,7 +24,7 @@ async def test_callback_transport_handshake() -> None:
     transport = CallbackTransport(mock_protocol, mock_writer)
 
     # Assert handshake called immediately
-    mock_protocol.connection_made.assert_called_once_with(transport, ramses=True)
+    mock_protocol.connection_made.assert_called_once_with(transport)
 
 
 async def test_callback_transport_handshake_idempotency() -> None:
