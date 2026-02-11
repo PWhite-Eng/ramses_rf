@@ -2,10 +2,11 @@
 """RAMSES RF - Typing for RamsesProtocol & RamsesTransport."""
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, NewType, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, NewType, TypeAlias, TypedDict, TypeVar
 
 if TYPE_CHECKING:
     from .message import Message
+    from .transports.base import RamsesTransport
 
 MsgFilterT = Callable[["Message"], bool]
 MsgHandlerT = Callable[["Message"], None]
@@ -25,3 +26,5 @@ DeviceTraitsT = TypedDict(
 )
 
 DeviceListT: TypeAlias = dict[DeviceIdT, DeviceTraitsT]
+
+RamsesTransportT = TypeVar("RamsesTransportT", bound="RamsesTransport")

@@ -12,10 +12,15 @@ from datetime import datetime as dt, timedelta as td
 from functools import wraps
 from string import printable
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 from .. import exceptions as exc
 from ..const import (
+    DBG_DISABLE_DUTY_CYCLE_LIMIT as DBG_DISABLE_DUTY_CYCLE_LIMIT,
+    DBG_DISABLE_REGEX_WARNINGS as DBG_DISABLE_REGEX_WARNINGS,
+    DBG_FORCE_FRAME_LOGGING as DBG_FORCE_FRAME_LOGGING,
+    DEFAULT_TIMEOUT_MQTT as DEFAULT_TIMEOUT_MQTT,
+    DEFAULT_TIMEOUT_PORT as DEFAULT_TIMEOUT_PORT,
     DUTY_CYCLE_DURATION,
     I_,
     RP,
@@ -31,21 +36,26 @@ from ..const import (
 )
 from ..helpers import dt_now
 from ..packet import Packet
-from ..typing import DeviceIdT
 
 if TYPE_CHECKING:
     from ..protocol import RamsesProtocol
-
-
-from ..const import (
-    DBG_DISABLE_DUTY_CYCLE_LIMIT as DBG_DISABLE_DUTY_CYCLE_LIMIT,
-    DBG_DISABLE_REGEX_WARNINGS as DBG_DISABLE_REGEX_WARNINGS,
-    DBG_FORCE_FRAME_LOGGING as DBG_FORCE_FRAME_LOGGING,
-    DEFAULT_TIMEOUT_MQTT as DEFAULT_TIMEOUT_MQTT,
-    DEFAULT_TIMEOUT_PORT as DEFAULT_TIMEOUT_PORT,
-)
+    from ..typing import DeviceIdT
 
 _LOGGER = logging.getLogger(__name__)
+
+# Type Definitions
+_RegexRuleT: TypeAlias = dict[str, str]
+
+
+# Protocols for strict Mypy typing of Decorator Factories
+class _DutyCycleDecorator(Protocol):
+    def __call__[F: Callable[..., Any]](self, fnc: F) -> F: ...
+
+
+# Constants
+_MAX_TRACKED_TRANSMITS = 99
+_MAX_TRACKED_DURATION = 300
+_MAX_TRACKED_SYNCS = 3
 
 
 def _normalise(pkt_line: str) -> str:
@@ -76,21 +86,22 @@ def _str(value: bytes) -> str:
 
 def limit_duty_cycle(
     max_duty_cycle: float, time_window: int = DUTY_CYCLE_DURATION
-) -> Callable[..., Any]:
+) -> _DutyCycleDecorator:
     """Limit the Tx rate to the RF duty cycle regulations (e.g. 1% per hour)."""
     TX_RATE_AVAIL: int = 38400
     FILL_RATE: float = TX_RATE_AVAIL * max_duty_cycle
     BUCKET_CAPACITY: float = FILL_RATE * time_window
 
-    def decorator(
-        fnc: Callable[..., Awaitable[None]],
-    ) -> Callable[..., Awaitable[None]]:
+    def decorator[F: Callable[..., Any]](fnc: F) -> F:
         bits_in_bucket: float = BUCKET_CAPACITY
         last_time_bit_added = perf_counter()
 
         @wraps(fnc)
         async def wrapper(self: Any, frame: str, *args: Any, **kwargs: Any) -> None:
-            if kwargs.get("disable_tx_limits"):
+            # Honor global test overrides to bypass arbitrary test suite delays
+            if kwargs.get("disable_tx_limits") or getattr(
+                self, "_disable_tx_limits", False
+            ):
                 await fnc(self, frame, *args, **kwargs)
                 return
 
@@ -122,19 +133,13 @@ def limit_duty_cycle(
             await fnc(self, frame, *args, **kwargs)
 
         if 0 < max_duty_cycle <= 1:
-            return wrapper
-        return null_wrapper
+            return cast(F, wrapper)
+        return cast(F, null_wrapper)
 
     return decorator
 
 
-_MAX_TRACKED_TRANSMITS = 99
-_MAX_TRACKED_DURATION = 300
-_MAX_TRACKED_SYNCS = 3
-_global_sync_cycles: deque[Packet] = deque(maxlen=_MAX_TRACKED_SYNCS)
-
-
-def avoid_system_syncs(fnc: Callable[..., Awaitable[None]]) -> Callable[..., Any]:
+def avoid_system_syncs[F: Callable[..., Awaitable[None]]](fnc: F) -> F:
     """Take measures to avoid Tx when any controller is doing a sync cycle."""
     DURATION_PKT_GAP = 0.020
     DURATION_LONG_PKT = 0.022
@@ -146,8 +151,13 @@ def avoid_system_syncs(fnc: Callable[..., Awaitable[None]]) -> Callable[..., Any
     SYNC_WINDOW_UPPER = SYNC_WINDOW_LOWER + td(seconds=SYNC_WAIT_LONG * 1.2)
 
     @wraps(fnc)
-    async def wrapper(*args: Any, **kwargs: Any) -> None:
-        global _global_sync_cycles
+    async def wrapper(self: Any, *args: Any, **kwargs: Any) -> None:
+        # Honor global test overrides to bypass arbitrary test suite delays
+        if kwargs.get("disable_tx_limits") or getattr(
+            self, "_disable_tx_limits", False
+        ):
+            await fnc(self, *args, **kwargs)
+            return
 
         def is_imminent(p: Packet) -> bool:
             return bool(
@@ -158,25 +168,26 @@ def avoid_system_syncs(fnc: Callable[..., Awaitable[None]]) -> Callable[..., Any
 
         start = perf_counter()
 
-        while any(is_imminent(p) for p in _global_sync_cycles):
+        # Safely retrieve local sync cycles, skipping if not yet initialized
+        sync_cycles = getattr(self, "_sync_cycles", [])
+
+        while any(is_imminent(p) for p in sync_cycles):
             await asyncio.sleep(SYNC_WAIT_SHORT)
 
         if perf_counter() - start > SYNC_WAIT_SHORT:
             await asyncio.sleep(SYNC_WAIT_LONG)
 
-        await fnc(*args, **kwargs)
+        await fnc(self, *args, **kwargs)
         return None
 
-    return wrapper
+    return cast(F, wrapper)
 
 
-def track_system_syncs(fnc: Callable[..., None]) -> Callable[..., Any]:
+def track_system_syncs[F: Callable[..., Any]](fnc: F) -> F:
     """Track/remember any new/outstanding TCS sync cycle."""
 
     @wraps(fnc)
     def wrapper(self: Any, pkt: Packet) -> None:
-        global _global_sync_cycles
-
         def is_pending(p: Packet) -> bool:
             return bool(p.dtm + td(seconds=int(p.payload[2:6], 16) / 10) > dt_now())
 
@@ -184,33 +195,30 @@ def track_system_syncs(fnc: Callable[..., None]) -> Callable[..., Any]:
             fnc(self, pkt)
             return None
 
-        _global_sync_cycles = deque(
-            p for p in _global_sync_cycles if p.src != pkt.src and is_pending(p)
+        # Track locally instead of globally, explicitly typed for Mypy
+        current_syncs: deque[Packet] = getattr(
+            self, "_sync_cycles", deque(maxlen=_MAX_TRACKED_SYNCS)
         )
-        _global_sync_cycles.append(pkt)
+        valid_syncs = [p for p in current_syncs if p.src != pkt.src and is_pending(p)]
 
-        if len(_global_sync_cycles) > _MAX_TRACKED_SYNCS:
-            _global_sync_cycles.popleft()
+        new_syncs = deque(valid_syncs, maxlen=_MAX_TRACKED_SYNCS)
+        new_syncs.append(pkt)
+        self._sync_cycles = new_syncs
 
         fnc(self, pkt)
 
-    return wrapper
+    return cast(F, wrapper)
 
 
 class RamsesTransport(asyncio.Transport):
     """Public Base class for all RAMSES-II transports."""
 
     def __init__(self, protocol: Any, *args: Any, **kwargs: Any) -> None:
-        # 1. Store the protocol locally
         self._protocol = protocol
+        self._sync_cycles: deque[Packet] = deque(maxlen=_MAX_TRACKED_SYNCS)
 
-        # 2. Extract 'extra' if it exists, as it's all BaseTransport wants
         extra = kwargs.get("extra")
-
-        # 3. Strip 'loop' out of kwargs as it crashes BaseTransport
         kwargs.pop("loop", None)
-
-        # 4. ONLY pass 'extra' to the standard asyncio.Transport
         super().__init__(extra=extra)
 
     def _dt_now(self) -> dt:
@@ -236,10 +244,7 @@ class _ReadTransport(RamsesTransport):
         extra: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        # 1. Safely extract loop for our own use
         self._loop = kwargs.pop("loop", None) or asyncio.get_running_loop()
-
-        # 2. Pass protocol explicitly as the first argument to RamsesTransport
         super().__init__(protocol, *args, **kwargs)
 
         self._extra: dict[str, Any] = {} if extra is None else extra
@@ -263,6 +268,7 @@ class _ReadTransport(RamsesTransport):
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
+        """Return the active event loop."""
         return self._loop
 
     def get_extra_info(self, name: str, default: Any = None) -> Any:
@@ -271,6 +277,7 @@ class _ReadTransport(RamsesTransport):
         return self._extra.get(name, default)
 
     def is_closing(self) -> bool:
+        """Return True if the transport is closing or closed."""
         return self._closing
 
     def _close(self, exc: exc.RamsesException | None = None) -> None:
@@ -282,15 +289,19 @@ class _ReadTransport(RamsesTransport):
         )
 
     def close(self) -> None:
+        """Close the transport."""
         self._close()
 
     def is_reading(self) -> bool:
+        """Return True if the transport is actively reading data."""
         return self._reading
 
     def pause_reading(self) -> None:
+        """Pause the transport read operations."""
         self._reading = False
 
     def resume_reading(self) -> None:
+        """Resume the transport read operations."""
         self._reading = True
 
     def _make_connection(self, gwy_id: DeviceIdT | None) -> None:
@@ -374,9 +385,6 @@ class _FullTransport(_ReadTransport):
         raise NotImplementedError("_write_frame() not implemented here")
 
 
-_RegexRuleT: TypeAlias = dict[str, str]
-
-
 class _RegHackMixin:
     """Mixin to apply regex rules to inbound and outbound frames."""
 
@@ -409,5 +417,6 @@ class _RegHackMixin:
 
     async def write_frame(self, frame: str, disable_tx_limits: bool = False) -> None:
         await super().write_frame(  # type: ignore[misc]
-            self._regex_hack(frame, self._outbound_rule)
+            self._regex_hack(frame, self._outbound_rule),
+            disable_tx_limits=disable_tx_limits,
         )
