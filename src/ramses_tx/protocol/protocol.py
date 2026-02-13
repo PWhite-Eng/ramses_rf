@@ -58,6 +58,7 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
         enforce_include_list: bool = False,
         exclude_list: DeviceListT | None = None,
         include_list: DeviceListT | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the RAMSES Protocol.
 
@@ -71,8 +72,10 @@ class RamsesProtocol(asyncio.Protocol, IPacketSender):
         self._msg_handler = msg_handler
         self._msg_handlers: list[MsgHandlerT] = []
 
-        self._disable_qos = disable_qos
         self._disable_sending = disable_sending
+
+        # QoS is enabled by default unless disable_qos is explicitly True
+        self._disable_qos: bool = kwargs.get("disable_qos", False)
 
         # Device ID Filtering
         self._enforce_include_list = enforce_include_list
