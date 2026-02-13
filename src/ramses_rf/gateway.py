@@ -150,7 +150,9 @@ class Gateway(Engine):
             **combined_config,
         )
 
-        if self._disable_sending:
+        # FIX: Do not disable discovery if we are replaying a file (input_file),
+        # even if sending is disabled. We need discovery to process the log.
+        if self._disable_sending and not self._input_file:
             self.config = replace(self.config, disable_discovery=True)
 
         if config.get(SZ_ENABLE_EAVESDROP):
@@ -241,19 +243,19 @@ class Gateway(Engine):
             # if activated in ramses_cc > Engine or set in tests
             self.create_sqlite_message_index()
 
-        # temporarily turn on discovery (set to True disables it), remember original state
+        # temporarily disable discovery, remember original state
         saved_disable_discovery = self.config.disable_discovery
         self.config = replace(self.config, disable_discovery=True)
 
         # Schema loading happens with discovery DISABLED to prevent side effects
         load_schema(self, known_list=self._include, **self._schema)  # create faked too
 
-        if cached_packets:
-            await self._restore_cached_packets(cached_packets)
-
-        # Restore discovery state BEFORE starting the engine
+        # Restore discovery state BEFORE restoring cache or starting the engine
         # This ensures the file replay (if any) occurs with discovery enabled
         self.config = replace(self.config, disable_discovery=saved_disable_discovery)
+
+        if cached_packets:
+            await self._restore_cached_packets(cached_packets)
 
         await super().start()
 
@@ -420,6 +422,11 @@ class Gateway(Engine):
 
         _LOGGER.debug("Gateway: Restoring a cached packet log...")
         await self._pause()
+
+        # FIX: We need discovery enabled during replay to populate the schema,
+        # but self._pause() set it to True. We force it to False here.
+        # _resume() will restore the correct state (e.g., False) afterwards.
+        self.config = replace(self.config, disable_discovery=False)
 
         if _clear_state:  # only intended for test suite use
             clear_state()

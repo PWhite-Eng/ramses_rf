@@ -79,10 +79,11 @@ async def test_restore_from_log_file(dir_name: Path) -> None:
     expected: dict = load_expected_results(dir_name) or {}
     gwy: Gateway = await load_test_gwy(dir_name)
 
-    # assert_expected(gwy, expected)
-    assert_expected_set(gwy, expected)
-
-    await gwy.stop()
+    try:
+        # assert_expected(gwy, expected)
+        assert_expected_set(gwy, expected)
+    finally:
+        await gwy.stop()
 
 
 async def test_restore_from_log_file_sql(dir_name: Path) -> None:
@@ -91,10 +92,11 @@ async def test_restore_from_log_file_sql(dir_name: Path) -> None:
     expected: dict = load_expected_results(dir_name) or {}
     gwy: Gateway = await load_test_gwy(dir_name, _sqlite_index=True)
 
-    # assert_expected(gwy, expected)
-    assert_expected_set(gwy, expected)
-
-    await gwy.stop()
+    try:
+        # assert_expected(gwy, expected)
+        assert_expected_set(gwy, expected)
+    finally:
+        await gwy.stop()
 
 
 async def test_shuffle_from_log_file(dir_name: Path) -> None:
@@ -103,16 +105,17 @@ async def test_shuffle_from_log_file(dir_name: Path) -> None:
     expected: dict = load_expected_results(dir_name) or {}
     gwy: Gateway = await load_test_gwy(dir_name)
 
-    schema, packets = await gwy.get_state(include_expired=True)
-    packets = shuffle_dict(packets)
-    await gwy._restore_cached_packets(packets)
-    if gwy.msg_db:
-        gwy.msg_db.flush()
-    await asyncio.sleep(0.05)  # Let loop process updates
+    try:
+        schema, packets = await gwy.get_state(include_expired=True)
+        packets = shuffle_dict(packets)
+        await gwy._restore_cached_packets(packets)
+        if gwy.msg_db:
+            gwy.msg_db.flush()
+        await asyncio.sleep(0.05)  # Let loop process updates
 
-    assert_expected_set(gwy, expected)
-
-    await gwy.stop()
+        assert_expected_set(gwy, expected)
+    finally:
+        await gwy.stop()
 
 
 async def test_shuffle_from_log_file_sql(dir_name: Path) -> None:
@@ -121,16 +124,17 @@ async def test_shuffle_from_log_file_sql(dir_name: Path) -> None:
     expected: dict = load_expected_results(dir_name) or {}
     gwy: Gateway = await load_test_gwy(dir_name, _sqlite_index=True)
 
-    schema, packets = await gwy.get_state(include_expired=True)
-    packets = shuffle_dict(packets)
-    await gwy._restore_cached_packets(packets)
-    if gwy.msg_db:
-        gwy.msg_db.flush()
-    await asyncio.sleep(0.05)  # Let loop process updates
+    try:
+        schema, packets = await gwy.get_state(include_expired=True)
+        packets = shuffle_dict(packets)
+        await gwy._restore_cached_packets(packets)
+        if gwy.msg_db:
+            gwy.msg_db.flush()
+        await asyncio.sleep(0.05)  # Let loop process updates
 
-    assert_expected_set(gwy, expected)
-
-    await gwy.stop()
+        assert_expected_set(gwy, expected)
+    finally:
+        await gwy.stop()
 
 
 async def test_fuzz_from_log_file(dir_name: Path) -> None:
@@ -139,33 +143,32 @@ async def test_fuzz_from_log_file(dir_name: Path) -> None:
     expected: dict = load_expected_results(dir_name) or {}
     gwy: Gateway = await load_test_gwy(dir_name)
 
-    # for dev in gwy.devices:
-    #     if dev._msgs:
-    #         assert dev._msgs == gwy.msg_db.get(
-    #             src=dev.id, dtms=list(dev._msgs.keys())
-    #         ), f"Assert 1: {dev} qry != _msgs_"
+    try:
+        # for dev in gwy.devices:
+        #     if dev._msgs:
+        #         assert dev._msgs == gwy.msg_db.get(
+        #             src=dev.id, dtms=list(dev._msgs.keys())
+        #         ), f"Assert 1: {dev} qry != _msgs_"
+        schema, packets = await gwy.get_state(include_expired=True)
 
-    schema, packets = await gwy.get_state(include_expired=True)
+        # This loop is non-deterministic, but should be stable (fails rarely)
+        # The logic is that the system state should be consistent regardless of the order
+        # of the packets (within reason)
+        for _ in range(3):
+            packets = shuffle_dict(packets)
+            await gwy._restore_cached_packets(packets)
+            if gwy.msg_db:
+                gwy.msg_db.flush()
+            await asyncio.sleep(0.05)  # Let loop process updates
 
-    # This loop is non-deterministic, but should be stable (fails rarely)
-    # The logic is that the system state should be consistent regardless of the order
-    # of the packets (within reason)
-    for _ in range(3):
-        packets = shuffle_dict(packets)
-        await gwy._restore_cached_packets(packets)
-        if gwy.msg_db:
-            gwy.msg_db.flush()
-        await asyncio.sleep(0.05)  # Let loop process updates
-
-        assert_expected_set(gwy, expected)
-
-    # for dev in gwy.devices:
-    #     if dev._msgs:
-    #         assert dev._msgs == gwy.msg_db.get(
-    #             src=dev.id, dtms=list(dev._msgs.keys())
-    #         ), f"Assert 2: {dev} qry != _msgs_"
-
-    await gwy.stop()
+            assert_expected_set(gwy, expected)
+    finally:
+        # for dev in gwy.devices:
+        #     if dev._msgs:
+        #         assert dev._msgs == gwy.msg_db.get(
+        #             src=dev.id, dtms=list(dev._msgs.keys())
+        #         ), f"Assert 2: {dev} qry != _msgs_"
+        await gwy.stop()
 
 
 async def test_fuzz_from_log_file_sql(dir_name: Path) -> None:
@@ -174,30 +177,29 @@ async def test_fuzz_from_log_file_sql(dir_name: Path) -> None:
     expected: dict = load_expected_results(dir_name) or {}
     gwy: Gateway = await load_test_gwy(dir_name, _sqlite_index=True)
 
-    # for dev in gwy.devices:
-    #     if dev._msgs:
-    #         assert dev._msgs == gwy.msg_db.get(
-    #             src=dev.id, dtms=list(dev._msgs.keys())
-    #         ), f"Assert 1: {dev} qry != _msgs_"
+    try:
+        # for dev in gwy.devices:
+        #     if dev._msgs:
+        #         assert dev._msgs == gwy.msg_db.get(
+        #             src=dev.id, dtms=list(dev._msgs.keys())
+        #         ), f"Assert 1: {dev} qry != _msgs_"
+        schema, packets = await gwy.get_state(include_expired=True)
 
-    schema, packets = await gwy.get_state(include_expired=True)
+        # This loop is non-deterministic, but should be stable (fails rarely)
+        # The logic is that the system state should be consistent regardless of the order
+        # of the packets (within reason)
+        for _ in range(3):
+            packets = shuffle_dict(packets)
+            await gwy._restore_cached_packets(packets)
+            if gwy.msg_db:
+                gwy.msg_db.flush()
+            await asyncio.sleep(0.05)  # Let loop process updates
 
-    # This loop is non-deterministic, but should be stable (fails rarely)
-    # The logic is that the system state should be consistent regardless of the order
-    # of the packets (within reason)
-    for _ in range(3):
-        packets = shuffle_dict(packets)
-        await gwy._restore_cached_packets(packets)
-        if gwy.msg_db:
-            gwy.msg_db.flush()
-        await asyncio.sleep(0.05)  # Let loop process updates
-
-        assert_expected_set(gwy, expected)
-
-    # for dev in gwy.devices:
-    #     if dev._msgs:
-    #         assert dev._msgs == gwy.msg_db.get(
-    #             src=dev.id, dtms=list(dev._msgs.keys())
-    #         ), f"Assert 2: {dev} qry != _msgs_"
-
-    await gwy.stop()
+            assert_expected_set(gwy, expected)
+    finally:
+        # for dev in gwy.devices:
+        #     if dev._msgs:
+        #         assert dev._msgs == gwy.msg_db.get(
+        #             src=dev.id, dtms=list(dev._msgs.keys())
+        #         ), f"Assert 2: {dev} qry != _msgs_"
+        await gwy.stop()

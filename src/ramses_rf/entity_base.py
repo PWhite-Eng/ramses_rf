@@ -143,6 +143,10 @@ class _Entity:
         ]:  # FIXME: deprecate QoS in kwargs, should be qos=QosParams(...)
             raise RuntimeError("Deprecated kwargs: %s", kwargs)
 
+        # Guard: Check if sending is disabled (e.g. log replay)
+        if self._gwy._disable_sending:
+            return None
+
         # cmd._source_entity = self  # TODO: is needed?
         return self._gwy.send_cmd(cmd, wait_for_reply=False, **kwargs)
 
@@ -159,6 +163,10 @@ class _Entity:
         if self._qos_tx_count > _QOS_TX_LIMIT:
             _LOGGER.warning(f"{cmd} < Sending was deprecated for {self}")
             return None  # FIXME: raise Exception (should be handled before now)
+
+        # Guard: Check if sending is disabled
+        if self._gwy._disable_sending:
+            return None
 
         # cmd._source_entity = self  # TODO: is needed?
         return await self._gwy.async_send_cmd(
@@ -999,6 +1007,9 @@ class _Discovery(_MessageDB):
     def _start_discovery_poller(self) -> None:
         """Start the discovery poller (if it is not already running)."""
 
+        if self._gwy._disable_sending:
+            return
+
         if self._discovery_poller and not self._discovery_poller.done():
             return
 
@@ -1063,7 +1074,7 @@ class _Discovery(_MessageDB):
                             ),
                         )
                         if len(res) > 0:
-                            msgs += res[0]  # expect 1 Message in returned tuple
+                            msgs.append(res[0])  # expect 1 Message in returned tuple
                         else:
                             _LOGGER.debug(
                                 f"No msg found for hdr {hdr}, task code {task[_SZ_COMMAND].code}"
@@ -1071,7 +1082,9 @@ class _Discovery(_MessageDB):
                     else:  # TODO(eb) remove next Q1 2026
                         # CRITICAL FIX: self.tcs might be None during early discovery
                         if self.tcs:
-                            msgs += [self.tcs._msgz[task[_SZ_COMMAND].code][I_][True]]
+                            msgs.append(
+                                self.tcs._msgz[task[_SZ_COMMAND].code][I_][True]
+                            )  # was += [ ... ]
                         # raise NotImplementedError
             except KeyError:
                 pass
