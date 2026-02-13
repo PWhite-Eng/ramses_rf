@@ -227,6 +227,7 @@ class Gateway(Engine):
                 if system.dhw:
                     system.dhw._start_discovery_poller()
 
+        # NOTE: self._packet_log is guaranteed to be a dict by GatewayConfig
         _, self._pkt_log_listener = await set_pkt_logging_config(
             cc_console=self.config.reduce_processing >= DONT_CREATE_MESSAGES,
             **self._packet_log,
@@ -240,18 +241,21 @@ class Gateway(Engine):
             # if activated in ramses_cc > Engine or set in tests
             self.create_sqlite_message_index()
 
-        # temporarily turn on discovery, remember original state
-        disable_discovery = self.config.disable_discovery
+        # temporarily turn on discovery (set to True disables it), remember original state
+        saved_disable_discovery = self.config.disable_discovery
         self.config = replace(self.config, disable_discovery=True)
 
+        # Schema loading happens with discovery DISABLED to prevent side effects
         load_schema(self, known_list=self._include, **self._schema)  # create faked too
 
-        await super().start()  # TODO: do this *after* restore cache
         if cached_packets:
             await self._restore_cached_packets(cached_packets)
 
-        # reset discovery to original state
-        self.config = replace(self.config, disable_discovery=disable_discovery)
+        # Restore discovery state BEFORE starting the engine
+        # This ensures the file replay (if any) occurs with discovery enabled
+        self.config = replace(self.config, disable_discovery=saved_disable_discovery)
+
+        await super().start()
 
         if (
             not self._disable_sending
@@ -505,8 +509,11 @@ class Gateway(Engine):
             if dev_id in self._unwanted:  # TODO: shouldn't invalidate a msg
                 raise LookupError(f"Can't create {dev_id}: it is unwanted or invalid")
 
+            # Check known list
+            # Robust check for self.hgi (which may be None if transport not started)
+            hgi_id = self.hgi.id if self.hgi else None
             if self._enforce_known_list and (
-                dev_id not in self._include and dev_id != getattr(self.hgi, "id", None)
+                dev_id not in self._include and dev_id != hgi_id
             ):
                 self._unwanted.append(dev_id)
                 raise LookupError(

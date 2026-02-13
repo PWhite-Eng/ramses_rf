@@ -130,7 +130,8 @@ class FileTransport(_ReadTransport, _FileTransportAbstractor):
 
         # Batch yields to improve performance on large files
         self._count += 1
-        if self._count % 25 == 0:
+        # Increased batch size to 500 to fix slow test performance
+        if self._count % 500 == 0:
             await asyncio.sleep(0)
 
     def _close(self, exc: exc.RamsesException | None = None) -> None:

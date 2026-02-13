@@ -201,23 +201,34 @@ def process_msg(gwy: Gateway, msg: Message) -> None:
         elif _LOGGER.getEffectiveLevel() == logging.DEBUG:
             _LOGGER.info(msg)
 
-    try:  # validate / dispatch the packet
-        _check_msg_addrs(msg)  # ?InvalidAddrSetError  TODO: ?useful at all
+    # validate / dispatch the packet
 
-        # TODO: any use in creating a device only if the payload is valid?
-        if gwy.config.reduce_processing >= DONT_CREATE_ENTITIES:
-            logger_xxxx(msg)  # return ensures try's else: clause won't be invoked
-            return
+    # 1. Address Set Validation (Non-fatal)
+    try:
+        _check_msg_addrs(msg)
+    except exc.PacketAddrSetInvalid as err:
+        (_LOGGER.error if _DBG_INCREASE_LOG_LEVELS else _LOGGER.warning)(
+            "%s < %s(%s)", msg._pkt, err.__class__.__name__, err
+        )
+        # Continue: Invalid address sets are often just garbage, but we let them pass
+        # for logging purposes or in case validation is too strict.
 
-        try:
-            _create_devices_from_addrs(gwy, msg)
-        except LookupError as err:
-            (_LOGGER.error if _DBG_INCREASE_LOG_LEVELS else _LOGGER.warning)(
-                "%s < %s(%s)", msg._pkt, err.__class__.__name__, err
-            )
-            return
+    if gwy.config.reduce_processing >= DONT_CREATE_ENTITIES:
+        logger_xxxx(msg)
+        return
 
-        _check_src_slug(msg)  # ? raise exc.PacketInvalid
+    # 2. Device Creation (Fatal for this packet if it fails)
+    try:
+        _create_devices_from_addrs(gwy, msg)
+    except LookupError as err:
+        (_LOGGER.error if _DBG_INCREASE_LOG_LEVELS else _LOGGER.warning)(
+            "%s < %s(%s)", msg._pkt, err.__class__.__name__, err
+        )
+        return
+
+    # 3. Slug/Type Validation (Non-fatal)
+    try:
+        _check_src_slug(msg)
         if (
             msg.src._SLUG != DevType.HGI  # avoid: msg.src.id != gwy.hgi.id
             and msg.verb != I_
@@ -225,15 +236,24 @@ def process_msg(gwy: Gateway, msg: Message) -> None:
         ):
             # HGI80 can do what it likes
             # receiving an I_ isn't currently in the schema & so can't yet be tested
-            _check_dst_slug(msg)  # ? raise exc.PacketInvalid
+            _check_dst_slug(msg)
 
-        if gwy.config.reduce_processing >= DONT_UPDATE_ENTITIES:
-            logger_xxxx(msg)  # return ensures try's else: clause won't be invoked
-            return
+    except exc.PacketInvalid as err:
+        # Schema Mismatch: The device type sends a code it shouldn't, or similar.
+        # We log it, but we CONTINUE. Dropping it prevents the Gateway from learning
+        # the state of devices that might be slightly misbehaving or newer than the schema.
+        (_LOGGER.error if _DBG_INCREASE_LOG_LEVELS else _LOGGER.warning)(
+            "%s < %s(%s)", msg._pkt, err.__class__.__name__, err
+        )
 
-        # NOTE: here, msgs are routed only to devices: routing to other entities (i.e.
-        # systems, zones, circuits) is done by those devices (e.g. UFC to UfhCircuit)
+    if gwy.config.reduce_processing >= DONT_UPDATE_ENTITIES:
+        logger_xxxx(msg)
+        return
 
+    # NOTE: here, msgs are routed only to devices: routing to other entities (i.e.
+    # systems, zones, circuits) is done by those devices (e.g. UFC to UfhCircuit)
+
+    try:
         if isinstance(msg.src, Device):  # type: ignore[unreachable]
             gwy._loop.call_soon(msg.src._handle_msg, msg)  # type: ignore[unreachable]
 
