@@ -72,6 +72,10 @@ class Engine:
     ) -> None:
 
         # 1. Create Config
+        # Allow parameters to be passed as a dict, e.g. config={}
+        if "config" in kwargs and isinstance(kwargs["config"], dict):
+            kwargs.update(kwargs.pop("config"))
+
         self.config = GatewayConfig.from_kwargs(port_name, input_file, **kwargs)
 
         # 2. Validation
