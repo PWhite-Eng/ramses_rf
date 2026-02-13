@@ -11,13 +11,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import fields
 from datetime import datetime as dt
 from typing import TYPE_CHECKING, Any
 
 from .address import ALL_DEV_ADDR, HGI_DEV_ADDR, NON_DEV_ADDR
 from .command import Command
-from .config import GatewayConfig
 from .const import (
     DEFAULT_DISABLE_QOS,
     DEFAULT_GAP_DURATION,
@@ -26,15 +24,21 @@ from .const import (
     DEFAULT_SEND_TIMEOUT,
     DEFAULT_WAIT_FOR_REPLY,
     SZ_ACTIVE_HGI,
+    SZ_DISABLE_QOS,
+    SZ_DISABLE_SENDING,
+    SZ_ENFORCE_KNOWN_LIST,
+    SZ_LOG_ALL_MQTT,
     SZ_PACKET_LOG,
     SZ_PORT_CONFIG,
     SZ_PORT_NAME,
+    SZ_SQLITE_INDEX,
     Priority,
 )
 from .message import Message
 from .models import QosParams
 from .packet import Packet
 from .protocol import protocol_factory
+from .schemas import select_device_filter_mode
 from .transports import transport_factory
 from .typing import PktLogConfigT, PortConfigT
 
@@ -76,41 +80,32 @@ class Engine:
         if "config" in kwargs and isinstance(kwargs["config"], dict):
             kwargs.update(kwargs.pop("config"))
 
-        self.config = GatewayConfig.from_kwargs(port_name, input_file, **kwargs)
-
         # 2. Validation
-        if not self.config.port_name and not input_file:
+        if not port_name and not input_file:
             raise TypeError("Either a port_name or an input_file must be specified")
 
-        if self.config.port_name and input_file:
+        if port_name and input_file:
             _LOGGER.warning(
                 "Port (%s) specified, so file (%s) ignored", port_name, input_file
             )
             # We strictly prioritize the port if both are given, but input_file
             # is kept in config for logging purposes if needed.
 
-        self.ser_name = self.config.port_name
+        self.ser_name = port_name
         self._input_file = input_file
 
         # 3. Use Config values instead of loose attributes
-        self._loop = kwargs.get("loop") or asyncio.get_running_loop()
+        self._loop = kwargs.pop("loop", None) or asyncio.get_running_loop()
 
-        # We keep _kwargs only for extra transport params (like auth, etc)
-        # We strip out keys we know we handled in GatewayConfig
-        exclude_keys = {f.name for f in fields(GatewayConfig)}
-        self._kwargs = {
-            k: v for k, v in kwargs.items() if k not in exclude_keys and k != "hgi_id"
-        }
-
-        self._disable_sending = self.config.disable_sending
+        self._disable_sending = kwargs.pop(SZ_DISABLE_SENDING, False)
 
         # Access typed dicts from config
-        self._port_config: PortConfigT = self.config.port_config
-        self._packet_log: PktLogConfigT = self.config.packet_log
+        self._port_config: PortConfigT = kwargs.pop(SZ_PORT_CONFIG, {})
+        self._packet_log: PktLogConfigT = kwargs.pop(SZ_PACKET_LOG, {})
 
         # Ensure lists are iterables (dict) to prevent TypeError in check_filter_lists
-        self._exclude: DeviceListT = self.config.block_list or {}
-        self._include: DeviceListT = self.config.known_list or {}
+        self._exclude: DeviceListT = kwargs.pop("block_list", {}) or {}
+        self._include: DeviceListT = kwargs.pop("known_list", {}) or {}
 
         self._unwanted: list[DeviceIdT] = [
             NON_DEV_ADDR.id,
@@ -118,11 +113,22 @@ class Engine:
             "01:000001",  # type: ignore[list-item]  # why this one?
         ]
 
-        self._enforce_known_list = self.config.enforce_known_list
-        self._sqlite_index = self.config.use_sqlite_index
-        self._log_all_mqtt = self.config.log_all_mqtt
+        # Use .get() instead of .pop() to ensure these flags remain in self._kwargs
+        # for the transport factory if needed
+        self._enforce_known_list = select_device_filter_mode(
+            kwargs.get(SZ_ENFORCE_KNOWN_LIST, False),
+            self._include,
+            self._exclude,
+        )
+        self._sqlite_index = kwargs.pop(
+            SZ_SQLITE_INDEX, False
+        )  # TODO Q1 2026: default True
+        self._log_all_mqtt = kwargs.pop(SZ_LOG_ALL_MQTT, False)
 
-        self._hgi_id = self.config.hgi_id
+        # We keep _kwargs only for extra transport params (like auth, etc)
+        self._kwargs: dict[str, Any] = kwargs  # HACK
+
+        self._hgi_id = kwargs.get("hgi_id")
         if self._hgi_id:
             self._kwargs[SZ_ACTIVE_HGI] = self._hgi_id
 
@@ -162,10 +168,12 @@ class Engine:
         The corresponding transport will be created later.
         """
 
+        # Use .get() for disable_qos so it remains in _kwargs for Transport
+        # Some transports might need to know if QoS is disabled
         self._protocol = protocol_factory(
             msg_handler,
             disable_sending=self._disable_sending,
-            disable_qos=self.config.disable_qos or DEFAULT_DISABLE_QOS,
+            disable_qos=self._kwargs.get(SZ_DISABLE_QOS, DEFAULT_DISABLE_QOS),
             enforce_include_list=self._enforce_known_list,
             exclude_list=self._exclude,
             include_list=self._include,
@@ -205,11 +213,23 @@ class Engine:
         else:  # if self._input_file:
             pkt_source[SZ_PACKET_LOG] = self._input_file  # filename as string
 
-        # Create a copy of kwargs and remove explicit args to avoid collisions
-        kwargs = self._kwargs.copy()
-        kwargs.pop("loop", None)
-        kwargs.pop("disable_sending", None)
-        kwargs.pop("log_all", None)
+        transport_kwargs = self._kwargs.copy()
+
+        # HACK: Re-inject config params that might be needed by the transport
+        # If ramses_rf.Gateway is used, self.config is a SimpleNamespace with all settings.
+        # Some settings (like reduce_processing) might have been filtered out of kwargs
+        # by SCH_ENGINE_CONFIG but are needed by transport/dispatcher implicitly.
+        if hasattr(self, "config"):
+            for key in (
+                "disable_discovery",
+                "disable_qos",
+                "enforce_known_list",
+                "evofw_flag",
+                "reduce_processing",
+                "use_native_ot",
+            ):
+                if hasattr(self.config, key) and key not in transport_kwargs:
+                    transport_kwargs[key] = getattr(self.config, key)
 
         # incl. await protocol.wait_for_connection_made(timeout=5)
         self._transport = await transport_factory(
@@ -218,10 +238,8 @@ class Engine:
             loop=self._loop,
             log_all=self._log_all_mqtt,
             **pkt_source,
-            **kwargs,  # HACK: odd/misc params, e.g. comms_params
+            **transport_kwargs,  # HACK: odd/misc params, e.g. comms_params
         )
-
-        self._kwargs = {}  # HACK
 
         await self._protocol.wait_for_connection_made()
 
