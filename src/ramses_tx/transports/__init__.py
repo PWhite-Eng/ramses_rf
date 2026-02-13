@@ -84,7 +84,35 @@ async def transport_factory(
     log_all: bool = False,
     **kwargs: Any,
 ) -> RamsesTransport:
-    """Create and return a Ramses-specific async packet Transport."""
+    """Create and return a Ramses-specific async packet Transport.
+
+    This factory determines the appropriate transport type (Serial, File, or custom)
+    based on the provided arguments.
+
+    :param protocol: The protocol instance to bind to the transport.
+    :type protocol: RamsesProtocol
+    :param port_name: The serial port name (e.g., '/dev/ttyUSB0').
+    :type port_name: SerPortNameT | None
+    :param port_config: Configuration for the serial port.
+    :type port_config: PortConfigT | None
+    :param packet_log: Path to a packet log file for playback.
+    :type packet_log: str | None
+    :param packet_dict: A dictionary of packets for testing.
+    :type packet_dict: dict[str, str] | None
+    :param transport_constructor: A custom transport factory.
+    :type transport_constructor: Callable[..., Awaitable[RamsesTransport]] | None
+    :param disable_sending: Whether to disable packet transmission.
+    :type disable_sending: bool
+    :param extra: Additional info for the transport.
+    :type extra: dict[str, Any] | None
+    :param loop: The asyncio event loop.
+    :type loop: asyncio.AbstractEventLoop | None
+    :param log_all: Whether to log all packets.
+    :type log_all: bool
+    :returns: An instance of a RamsesTransport.
+    :rtype: RamsesTransport
+    :raises TransportSourceInvalid: If sources are ambiguous or missing.
+    """
 
     # Extract autostart (default to False if missing), used in transport_constructor only
     autostart = kwargs.pop("autostart", False)
@@ -113,7 +141,6 @@ async def transport_factory(
         return FileTransport(pkt_source, protocol, extra=extra, loop=loop, **kwargs)
 
     assert port_name is not None  # mypy check
-    assert port_config is not None  # mypy check
 
     # MQTT
     if port_name[:4] == "mqtt":
