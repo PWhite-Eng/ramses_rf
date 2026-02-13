@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from dataclasses import fields
 from datetime import datetime as dt
 from typing import TYPE_CHECKING, Any
 
@@ -92,11 +93,9 @@ class Engine:
 
         # We keep _kwargs only for extra transport params (like auth, etc)
         # We strip out keys we know we handled in GatewayConfig
+        exclude_keys = {f.name for f in fields(GatewayConfig)}
         self._kwargs = {
-            k: v
-            for k, v in kwargs.items()
-            if k
-            not in ("block_list", "known_list", "hgi_id", "port_config", "packet_log")
+            k: v for k, v in kwargs.items() if k not in exclude_keys and k != "hgi_id"
         }
 
         self._disable_sending = self.config.disable_sending
@@ -282,7 +281,7 @@ class Engine:
 
         if self._engine_state is None:
             self._engine_lock.release()
-            raise RuntimeError("Unable to resume engine, it was not paused")
+            raise RuntimeError("Unable to resume engine, it is not paused")
 
         self._protocol._msg_handler, self._disable_sending, *args = self._engine_state  # type: ignore[assignment]
         self._engine_lock.release()

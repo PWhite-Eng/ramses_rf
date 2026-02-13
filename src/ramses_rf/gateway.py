@@ -16,6 +16,7 @@ from dataclasses import replace
 from logging.handlers import QueueListener
 from typing import TYPE_CHECKING, Any
 
+from ramses_rf.exceptions import SystemSchemaInconsistent  # Absolute import
 from ramses_tx import (
     Address,
     Command,
@@ -137,6 +138,14 @@ class Gateway(Engine):
         # Engine's GatewayConfig.from_kwargs will handle them if definitions match.
         combined_config = {**engine_config, **gateway_config}
 
+        # Apply discovery logic adjustments BEFORE Engine init
+        if input_file:
+            # We need discovery to process the log file, even if sending is disabled
+            combined_config["disable_discovery"] = False
+        elif combined_config.get("disable_sending"):
+            # If sending is disabled and not replaying, disable discovery
+            combined_config["disable_discovery"] = True
+
         super().__init__(
             port_name,
             input_file=input_file,
@@ -149,11 +158,6 @@ class Gateway(Engine):
             transport_constructor=transport_constructor,
             **combined_config,
         )
-
-        # FIX: Do not disable discovery if we are replaying a file (input_file),
-        # even if sending is disabled. We need discovery to process the log.
-        if self._disable_sending and not self._input_file:
-            self.config = replace(self.config, disable_discovery=True)
 
         if config.get(SZ_ENABLE_EAVESDROP):
             _LOGGER.warning(
@@ -566,7 +570,10 @@ class Gateway(Engine):
         #     dev._update_schema(**schema)  # TODO: schema/traits
 
         if parent or child_id:
-            dev.set_parent(parent, child_id=child_id, is_sensor=is_sensor)
+            try:
+                dev.set_parent(parent, child_id=child_id, is_sensor=is_sensor)
+            except SystemSchemaInconsistent as err:
+                _LOGGER.warning(f"Ignoring schema inconsistency: {err}")
 
         # if msg:
         #     dev._handle_msg(msg)
