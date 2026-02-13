@@ -61,8 +61,11 @@ class GatewayConfig:
         return cls(
             port_name=port_name,
             port_config=cast(PortConfigT, kwargs.pop("port_config", {})),
-            # Ensure popped value is not None (if None was passed in kwargs)
-            packet_log=cast(PktLogConfigT, kwargs.pop("packet_log", {}) or {}),
+            packet_log=cast(
+                PktLogConfigT,
+                kwargs.pop("packet_log", {})
+                or ({"file_name": input_file} if input_file else {}),
+            ),
             block_list=kwargs.get("block_list", {}),
             known_list=kwargs.get("known_list", {}),
             # Flags

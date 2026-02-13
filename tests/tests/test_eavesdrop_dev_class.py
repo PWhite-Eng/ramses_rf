@@ -4,7 +4,7 @@
 import asyncio
 import contextlib
 import json
-from datetime import datetime as dt
+from dataclasses import replace
 from pathlib import Path, PurePath
 
 import pytest
@@ -30,40 +30,25 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 def test_packets_from_log_file(dir_name: Path) -> None:
     """Check if all packets are parsed correctly."""
 
-    def proc_log_line(log_line: str) -> None:
-        if "#" not in log_line:
-            return
-        pkt_line, pkt_eval = log_line.split("#", maxsplit=1)
+    def proc_log_line(msg: Message) -> None:
+        assert msg.src._SLUG in eval(msg._pkt.comment)
 
-        if not (pkt_line := pkt_line.strip()):
-            return
+    path = f"{dir_name}/packet.log"
 
-        dtm = dt.now()
-        if " ... " in pkt_line:
-            dtm_str, pkt_line = pkt_line.split(" ... ", maxsplit=1)
-            with contextlib.suppress(ValueError):
-                dtm = dt.fromisoformat(dtm_str)
+    gwy = Gateway(None, input_file=path, config={"enable_eavesdrop": False})
+    gwy.config = replace(
+        gwy.config, enable_eavesdrop=True
+    )  # Test setting this config attr
 
-        try:
-            pkt = Packet(dtm, f"... {pkt_line}")
-        except (ValueError, exc.PacketInvalid):
-            return
+    gwy.add_msg_handler(proc_log_line)
 
-        msg = Message(pkt)
-
-        try:
-            expected = eval(pkt_eval)
-        except SyntaxError:
-            return
-
-        # Check the payload is as expected
-        assert msg.payload == expected
-
-    with open(f"{dir_name}/packet.log") as f:
-        while line := f.readline():
-            proc_log_line(line)
+    try:
+        await gwy.start()
+    finally:
+        await gwy.stop()
 
 
+# duplicate in test_eavesdrop_schema
 async def test_dev_eavesdrop_on_(dir_name: Path) -> None:
     """Check discovery of schema and known_list *with* eavesdropping."""
 

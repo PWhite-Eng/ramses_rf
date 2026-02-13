@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime as dt
+from dataclasses import replace
 from logging.handlers import QueueListener
 from typing import TYPE_CHECKING, Any
 
@@ -36,11 +36,13 @@ from ramses_tx.const import (
     DEFAULT_NUM_REPEATS,
     DEFAULT_SEND_TIMEOUT,
     DEFAULT_WAIT_FOR_REPLY,
+    SCH_ENGINE_CONFIG,
     SZ_ACTIVE_HGI,
     SZ_BLOCK_LIST,
     SZ_ENFORCE_KNOWN_LIST,
     SZ_KNOWN_LIST,
 )
+from ramses_tx.typing import PktLogConfigT, PortConfigT
 from ramses_tx.typing import PktLogConfigT, PortConfigT
 
 from .const import DONT_CREATE_MESSAGES, SZ_DEVICES, SZ_READER_TASK
@@ -145,36 +147,17 @@ class Gateway(Engine):
         if kwargs.pop("debug_mode", None):
             _LOGGER.setLevel(logging.DEBUG)
 
-        if config:
-            # We strictly prioritize explicit args over the config dict.
-            disable_discovery = config.get("disable_discovery", disable_discovery)
-            enable_eavesdrop = config.get(SZ_ENABLE_EAVESDROP, enable_eavesdrop)
-            reduce_processing = config.get("reduce_processing", reduce_processing)
-            max_zones = config.get(SZ_MAX_ZONES, max_zones)
-            use_native_ot = config.get("use_native_ot", use_native_ot)
-            disable_sending = config.get("disable_sending", disable_sending)
+        kwargs = {k: v for k, v in kwargs.items() if k[:1] != "_"}  # anachronism
+        config: dict[str, Any] = kwargs.pop(SZ_CONFIG, {})
 
-        # 2. Store Gateway Configuration
-        self._disable_discovery = disable_discovery
-        self._enable_eavesdrop = enable_eavesdrop
-        self._reduce_processing = reduce_processing
-        self._max_zones = max_zones
-        self._use_native_ot = use_native_ot
+        # Merge configs for Engine
+        engine_config = SCH_ENGINE_CONFIG(config)
+        gateway_config = SCH_GATEWAY_CONFIG(config)
 
-        # 3. Apply Discovery Logic Adjustments
-        # These override user settings based on operating mode
-        if input_file:
-            # We need discovery to process the log file, even if sending is disabled
-            self._disable_discovery = False
-        elif disable_sending:
-            # If sending is disabled and not replaying, disable discovery
-            self._disable_discovery = True
+        # We pass both sets of config to Engine.
+        # Engine's GatewayConfig.from_kwargs will handle them if definitions match.
+        combined_config = {**engine_config, **gateway_config}
 
-        # Pass transport_constructor to Engine via kwargs if provided
-        if transport_constructor:
-            transport_kwargs["transport_constructor"] = transport_constructor
-
-        # 4. Initialize Engine
         super().__init__(
             port_name,
             input_file=input_file,
@@ -186,21 +169,20 @@ class Gateway(Engine):
             packet_log=packet_log,
             port_config=port_config,
             hgi_id=hgi_id,
-            sqlite_index=sqlite_index,
-            log_all_mqtt=log_all_mqtt,
-            loop=loop,
-            config=config,  # Pass config down so Engine can extract transport args
-            **transport_kwargs,
+            transport_constructor=transport_constructor,
+            **combined_config,
         )
 
-        if self._enable_eavesdrop:
+        if self._disable_sending:
+            self.config = replace(self.config, disable_discovery=True)
+
+        if config.get(SZ_ENABLE_EAVESDROP):
             _LOGGER.warning(
                 f"{SZ_ENABLE_EAVESDROP}=True: this is strongly discouraged"
                 " for routine use (there be dragons here)"
             )
 
-        # The schema might be mixed into transport_kwargs in legacy calls
-        self._schema: dict[str, Any] = SCH_GLOBAL_SCHEMAS(transport_kwargs)
+        self._schema: dict[str, Any] = SCH_GLOBAL_SCHEMAS(kwargs)
 
         self._tcs: Evohome | None = None
 
@@ -277,9 +259,8 @@ class Gateway(Engine):
                 if system.dhw:
                     system.dhw._start_discovery_poller()
 
-        # NOTE: self._packet_log is guaranteed to be a dict by Engine
         _, self._pkt_log_listener = await set_pkt_logging_config(
-            cc_console=self._reduce_processing >= DONT_CREATE_MESSAGES,
+            cc_console=self.config.reduce_processing >= DONT_CREATE_MESSAGES,
             **self._packet_log,
         )
         if self._pkt_log_listener:
@@ -291,21 +272,18 @@ class Gateway(Engine):
             # if activated in ramses_cc > Engine or set in tests
             self.create_sqlite_message_index()
 
-        # Temporarily disable discovery during schema loading
-        saved_disable_discovery = self._disable_discovery
-        self._disable_discovery = True
+        # temporarily turn on discovery, remember original state
+        disable_discovery = self.config.disable_discovery
+        self.config = replace(self.config, disable_discovery=True)
 
-        try:
-            # Schema loading happens with discovery DISABLED to prevent side effects
-            load_schema(self, known_list=self._include, **self._schema)
-        finally:
-            # Restore discovery state
-            self._disable_discovery = saved_disable_discovery
+        load_schema(self, known_list=self._include, **self._schema)  # create faked too
 
+        await super().start()  # TODO: do this *after* restore cache
         if cached_packets:
             await self._restore_cached_packets(cached_packets)
 
-        await super().start()
+        # reset discovery to original state
+        self.config = replace(self.config, disable_discovery=disable_discovery)
 
         if (
             not self._disable_sending
@@ -358,13 +336,13 @@ class Gateway(Engine):
         """
         _LOGGER.debug("Gateway: Pausing engine...")
 
-        disc_flag = self._disable_discovery
-        self._disable_discovery = True
+        disc_flag = self.config.disable_discovery
+        self.config = replace(self.config, disable_discovery=True)
 
         try:
             await super()._pause(disc_flag, *args)
         except RuntimeError:
-            self._disable_discovery = disc_flag
+            self.config = replace(self.config, disable_discovery=disc_flag)
             raise
 
     async def _resume(self) -> tuple[Any]:
@@ -376,6 +354,7 @@ class Gateway(Engine):
         :rtype: tuple[Any]
         """
         args: tuple[Any, ...]
+        args: tuple[Any, ...]
 
         _LOGGER.debug("Gateway: Resuming engine...")
 
@@ -383,7 +362,7 @@ class Gateway(Engine):
         disc_flag = ret[0]
         args = tuple(ret[1:])
 
-        self._disable_discovery = disc_flag
+        self.config = replace(self.config, disable_discovery=disc_flag)
 
         return args
 
