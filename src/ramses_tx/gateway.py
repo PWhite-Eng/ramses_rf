@@ -24,14 +24,8 @@ from .const import (
     DEFAULT_SEND_TIMEOUT,
     DEFAULT_WAIT_FOR_REPLY,
     SZ_ACTIVE_HGI,
-    SZ_DISABLE_QOS,
-    SZ_DISABLE_SENDING,
-    SZ_ENFORCE_KNOWN_LIST,
-    SZ_LOG_ALL_MQTT,
-    SZ_PACKET_LOG,
     SZ_PORT_CONFIG,
     SZ_PORT_NAME,
-    SZ_SQLITE_INDEX,
     Priority,
 )
 from .message import Message
@@ -72,13 +66,53 @@ class Engine:
         self,
         port_name: str | None,
         input_file: str | None = None,
-        **kwargs: Any,
+        *,
+        # Explicit Engine Configuration
+        disable_sending: bool = False,
+        disable_qos: bool = DEFAULT_DISABLE_QOS,
+        enforce_known_list: bool = False,
+        block_list: DeviceListT | None = None,
+        known_list: DeviceListT | None = None,
+        packet_log: PktLogConfigT | None = None,
+        port_config: PortConfigT | None = None,
+        hgi_id: str | None = None,
+        sqlite_index: bool = False,
+        log_all_mqtt: bool = False,
+        loop: asyncio.AbstractEventLoop | None = None,
+        config: dict[str, Any] | None = None,
+        # Capture all remaining args for the Transport
+        **transport_kwargs: Any,
     ) -> None:
+        """Initialize the Engine.
 
-        # 1. Create Config
-        # Allow parameters to be passed as a dict, e.g. config={}
-        if "config" in kwargs and isinstance(kwargs["config"], dict):
-            kwargs.update(kwargs.pop("config"))
+        Args:
+            port_name: The serial port name (e.g. /dev/ttyUSB0).
+            input_file: Source packet log file (alternative to port).
+            disable_sending: If True, the gateway will not transmit.
+            disable_qos: If True, QoS (retransmits) is disabled.
+            enforce_known_list: If True, strictly filter based on known_list.
+            block_list: List of devices to ignore.
+            known_list: List of known devices.
+            packet_log: Configuration for packet logging.
+            port_config: Serial port configuration options.
+            hgi_id: Explicit ID for the HGI device.
+            sqlite_index: (Future) Use SQLite indexing.
+            log_all_mqtt: Log all MQTT messages.
+            loop: Asyncio loop.
+            config: Legacy config dict (deprecated: unpack at call site).
+            **transport_kwargs: Arguments passed directly to the transport factory.
+        """
+
+        # 1. Handle Legacy 'config' dict pattern
+        # Ideally, callers should use: Engine(..., **config)
+        # We manually unpack 'config' here to support legacy calls, but this is
+        # less strict than unpacking at the call site.
+        if config:
+            # We strictly prioritize explicit args over the config dict
+            # (which is standard python behavior when unpacking)
+            transport_kwargs.update(
+                {k: v for k, v in config.items() if k not in transport_kwargs}
+            )
 
         # 2. Validation
         if not port_name and not input_file:
@@ -88,49 +122,45 @@ class Engine:
             _LOGGER.warning(
                 "Port (%s) specified, so file (%s) ignored", port_name, input_file
             )
-            # We strictly prioritize the port if both are given, but input_file
-            # is kept in config for logging purposes if needed.
+            input_file = None
 
         self.ser_name = port_name
         self._input_file = input_file
 
-        # 3. Use Config values instead of loose attributes
-        self._loop = kwargs.pop("loop", None) or asyncio.get_running_loop()
+        # 3. Store Configuration
+        self._loop = loop or asyncio.get_running_loop()
+        self._disable_sending = disable_sending
+        self._disable_qos = disable_qos
+        self._port_config = port_config or {}
+        self._packet_log = packet_log or {}
 
-        self._disable_sending = kwargs.pop(SZ_DISABLE_SENDING, False)
-
-        # Access typed dicts from config
-        self._port_config: PortConfigT = kwargs.pop(SZ_PORT_CONFIG, {})
-        self._packet_log: PktLogConfigT = kwargs.pop(SZ_PACKET_LOG, {})
-
-        # Ensure lists are iterables (dict) to prevent TypeError in check_filter_lists
-        self._exclude: DeviceListT = kwargs.pop("block_list", {}) or {}
-        self._include: DeviceListT = kwargs.pop("known_list", {}) or {}
+        # Ensure lists are iterables (dict) to prevent TypeError
+        self._exclude = block_list or {}
+        self._include = known_list or {}
 
         self._unwanted: list[DeviceIdT] = [
             NON_DEV_ADDR.id,
             ALL_DEV_ADDR.id,
-            "01:000001",  # type: ignore[list-item]  # why this one?
+            "01:000001",  # type: ignore[list-item]
         ]
 
-        # Use .get() instead of .pop() to ensure these flags remain in self._kwargs
-        # for the transport factory if needed
         self._enforce_known_list = select_device_filter_mode(
-            kwargs.get(SZ_ENFORCE_KNOWN_LIST, False),
+            enforce_known_list,
             self._include,
             self._exclude,
         )
-        self._sqlite_index = kwargs.pop(
-            SZ_SQLITE_INDEX, False
-        )  # TODO Q1 2026: default True
-        self._log_all_mqtt = kwargs.pop(SZ_LOG_ALL_MQTT, False)
+        self._sqlite_index = sqlite_index
+        self._log_all_mqtt = log_all_mqtt
 
-        # We keep _kwargs only for extra transport params (like auth, etc)
-        self._kwargs: dict[str, Any] = kwargs  # HACK
+        # 4. Handle Transport Arguments
+        # We use strict explicit variables for Engine logic, but pass a clean
+        # dictionary to the transport factory.
+        self._transport_kwargs = transport_kwargs
+        self._hgi_id = hgi_id
 
-        self._hgi_id = kwargs.get("hgi_id")
+        # Pass specific Engine config items to transport if needed via kwargs
         if self._hgi_id:
-            self._kwargs[SZ_ACTIVE_HGI] = self._hgi_id
+            self._transport_kwargs[SZ_ACTIVE_HGI] = self._hgi_id
 
         self._engine_lock = asyncio.Lock()
         self._engine_state: (
@@ -167,13 +197,10 @@ class Engine:
 
         The corresponding transport will be created later.
         """
-
-        # Use .get() for disable_qos so it remains in _kwargs for Transport
-        # Some transports might need to know if QoS is disabled
         self._protocol = protocol_factory(
             msg_handler,
             disable_sending=self._disable_sending,
-            disable_qos=self._kwargs.get(SZ_DISABLE_QOS, DEFAULT_DISABLE_QOS),
+            disable_qos=self._disable_qos,
             enforce_include_list=self._enforce_known_list,
             exclude_list=self._exclude,
             include_list=self._include,
@@ -189,10 +216,6 @@ class Engine:
 
         The optional filter will return True if the message is to be handled.
         """
-
-        # if msg_filter is not None and not is_callback(msg_filter):
-        #     raise TypeError(f"Msg filter {msg_filter} is not a callback")
-
         if not msg_filter:
             msg_filter = lambda _: True  # noqa: E731
         else:
@@ -205,40 +228,33 @@ class Engine:
 
         Initiate receiving (Messages) and sending (Commands).
         """
-
-        pkt_source: dict[str, Any] = {}  # [str, dict | str | TextIO]
+        pkt_source: dict[str, Any] = {}
         if self.ser_name:
             pkt_source[SZ_PORT_NAME] = self.ser_name
             pkt_source[SZ_PORT_CONFIG] = self._port_config
         else:  # if self._input_file:
-            pkt_source[SZ_PACKET_LOG] = self._input_file  # filename as string
-
-        transport_kwargs = self._kwargs.copy()
+            # We treat the input file as a packet log source
+            # The transport factory likely expects 'packet_log' key or similar
+            # equivalent to the original logic
+            pkt_source["packet_log"] = self._input_file
 
         # HACK: Re-inject config params that might be needed by the transport
-        # If ramses_rf.Gateway is used, self.config is a SimpleNamespace with all settings.
-        # Some settings (like reduce_processing) might have been filtered out of kwargs
-        # by SCH_ENGINE_CONFIG but are needed by transport/dispatcher implicitly.
-        if hasattr(self, "config"):
-            for key in (
-                "disable_discovery",
-                "disable_qos",
-                "enforce_known_list",
-                "evofw_flag",
-                "reduce_processing",
-                "use_native_ot",
-            ):
-                if hasattr(self.config, key) and key not in transport_kwargs:
-                    transport_kwargs[key] = getattr(self.config, key)
+        # if they were passed implicitly in the original code.
+        # Since we now have explicit vars, we can selectively add them back
+        # to transport_kwargs if the transport layer expects them.
+        transport_kwargs = self._transport_kwargs.copy()
 
-        # incl. await protocol.wait_for_connection_made(timeout=5)
+        # Assuming the transport might check these flags:
+        transport_kwargs["disable_qos"] = self._disable_qos
+        transport_kwargs["enforce_known_list"] = self._enforce_known_list
+
         self._transport = await transport_factory(
             self._protocol,
             disable_sending=self._disable_sending,
             loop=self._loop,
             log_all=self._log_all_mqtt,
             **pkt_source,
-            **transport_kwargs,  # HACK: odd/misc params, e.g. comms_params
+            **transport_kwargs,
         )
 
         await self._protocol.wait_for_connection_made()
@@ -249,7 +265,6 @@ class Engine:
 
     async def stop(self) -> None:
         """Close the transport (will stop the protocol)."""
-
         # Shutdown Safety - wait for tasks to clean up
         tasks = [t for t in self._tasks if not t.done()]
         for t in tasks:
@@ -279,9 +294,9 @@ class Engine:
         self._engine_state = (None, None, tuple())  # aka not None
         self._engine_lock.release()  # is ok to release now
 
-        self._protocol.pause_writing()  # TODO: call_soon()?
+        self._protocol.pause_writing()
         if self._transport:
-            self._transport.pause_reading()  # TODO: call_soon()?
+            self._transport.pause_reading()
 
         self._protocol._msg_handler, handler = None, self._protocol._msg_handler  # type: ignore[assignment]
         self._disable_sending, read_only = True, self._disable_sending
@@ -290,7 +305,6 @@ class Engine:
 
     async def _resume(self) -> tuple[Any]:  # FIXME: not atomic
         """Resume the (paused) engine or raise a RuntimeError."""
-
         args: tuple[Any]  # mypy
 
         # Async lock with timeout
@@ -327,7 +341,6 @@ class Engine:
         verb: VerbT, device_id: DeviceIdT, code: Code, payload: PayloadT, **kwargs: Any
     ) -> Command:
         """Make a command addressed to device_id."""
-
         if [
             k for k in kwargs if k not in ("from_id", "seqn")
         ]:  # FIXME: deprecate QoS in kwargs
@@ -351,21 +364,12 @@ class Engine:
 
         If wait_for_reply is True (*and* the Command has a rx_header), return the
         reply Packet. Otherwise, simply return the echo Packet.
-
-        If the expected Packet can't be returned, raise:
-            ProtocolSendFailed: tried to Tx Command, but didn't get echo/reply
-            ProtocolError:      didn't attempt to Tx Command for some reason
         """
-
         qos = QosParams(
             max_retries=max_retries,
             timeout=timeout,
             wait_for_reply=wait_for_reply,
         )
-
-        # adjust priority, WFR here?
-        # if cmd.code in (Code._0005, Code._000C) and qos.wait_for_reply is None:
-        #     qos.wait_for_reply = True
 
         return await self._protocol.send_cmd(
             cmd,

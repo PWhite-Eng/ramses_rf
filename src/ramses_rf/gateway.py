@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 # TODO:
-# - sort out gwy.config...
 # - sort out reduced processing
 
 
@@ -12,8 +11,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
-from logging.handlers import QueueListener
 from typing import TYPE_CHECKING, Any
 
 from ramses_rf.exceptions import SystemSchemaInconsistent  # Absolute import
@@ -31,12 +28,12 @@ from ramses_tx import (
     transport_factory,
 )
 from ramses_tx.const import (
+    DEFAULT_DISABLE_QOS,
     DEFAULT_GAP_DURATION,
     DEFAULT_MAX_RETRIES,
     DEFAULT_NUM_REPEATS,
     DEFAULT_SEND_TIMEOUT,
     DEFAULT_WAIT_FOR_REPLY,
-    SCH_ENGINE_CONFIG,
     SZ_ACTIVE_HGI,
     SZ_BLOCK_LIST,
     SZ_ENFORCE_KNOWN_LIST,
@@ -49,7 +46,6 @@ from .database import MessageIndex
 from .device import DeviceHeat, DeviceHvac, Fakeable, HgiGateway, device_factory
 from .dispatcher import detect_array_fragment, process_msg
 from .schemas import (
-    SCH_GATEWAY_CONFIG,
     SCH_GLOBAL_SCHEMAS,
     SCH_TRAITS,
     SZ_ALIAS,
@@ -92,80 +88,107 @@ class Gateway(Engine):
         self,
         port_name: str | None,
         input_file: str | None = None,
-        port_config: PortConfigT | None = None,
-        packet_log: PktLogConfigT | None = None,
+        *,
+        # Gateway Configuration
+        disable_discovery: bool = False,
+        enable_eavesdrop: bool = False,
+        reduce_processing: int = 0,
+        # Engine Configuration
+        disable_sending: bool = False,
+        disable_qos: bool = DEFAULT_DISABLE_QOS,
+        enforce_known_list: bool = False,
         block_list: DeviceListT | None = None,
         known_list: DeviceListT | None = None,
+        packet_log: PktLogConfigT | None = None,
+        port_config: PortConfigT | None = None,
+        hgi_id: str | None = None,
+        sqlite_index: bool = False,
+        log_all_mqtt: bool = False,
+        # Infra
         loop: asyncio.AbstractEventLoop | None = None,
         transport_constructor: Callable[..., Awaitable[RamsesTransport]] | None = None,
-        hgi_id: str | None = None,
-        **kwargs: Any,
+        # Legacy
+        config: dict[str, Any] | None = None,
+        # Transport
+        **transport_kwargs: Any,
     ) -> None:
         """Initialize the Gateway instance.
 
-        :param port_name: The serial port name (e.g., '/dev/ttyUSB0') or None if using a file.
-        :type port_name: str | None
-        :param input_file: Path to a packet log file for playback/parsing, defaults to None.
-        :type input_file: str | None, optional
-        :param port_config: Configuration dictionary for the serial port, defaults to None.
-        :type port_config: PortConfigT | None, optional
-        :param packet_log: Configuration for packet logging, defaults to None.
-        :type packet_log: PktLogConfigT | None, optional
-        :param block_list: A list of device IDs to block/ignore, defaults to None.
-        :type block_list: DeviceListT | None, optional
-        :param known_list: A list of known device IDs and their traits, defaults to None.
-        :type known_list: DeviceListT | None, optional
-        :param loop: The asyncio event loop to use, defaults to None.
-        :type loop: asyncio.AbstractEventLoop | None, optional
-        :param transport_constructor: A factory for creating the transport layer, defaults to None.
-        :type transport_constructor: Callable[..., Awaitable[RamsesTransport]] | None, optional
-        :param hgi_id: The Device ID to use for the HGI (gateway), overriding defaults.
-        :type hgi_id: str | None, optional
-        :param kwargs: Additional configuration parameters passed to the engine and schema.
-        :type kwargs: Any
+        :param port_name: The serial port name (e.g., '/dev/ttyUSB0') or None.
+        :param input_file: Path to a packet log file, defaults to None.
+        :param disable_discovery: If True, discovery is disabled.
+        :param enable_eavesdrop: If True, eavesdropping is enabled (use with caution).
+        :param reduce_processing: Level of processing reduction.
+        :param disable_sending: If True, the gateway will not transmit.
+        :param disable_qos: If True, QoS (retransmits) is disabled.
+        :param enforce_known_list: If True, strictly filter based on known_list.
+        :param block_list: A list of device IDs to block/ignore.
+        :param known_list: A list of known device IDs and their traits.
+        :param packet_log: Configuration for packet logging.
+        :param port_config: Configuration dictionary for the serial port.
+        :param hgi_id: The Device ID to use for the HGI (gateway).
+        :param sqlite_index: If True, use SQLite indexing.
+        :param log_all_mqtt: If True, log all MQTT messages.
+        :param loop: The asyncio event loop to use.
+        :param transport_constructor: Factory for creating the transport.
+        :param config: Legacy configuration dictionary (deprecated).
+        :param transport_kwargs: Additional parameters for the transport layer.
         """
-        if kwargs.pop("debug_mode", None):
+
+        # 1. Handle Legacy arguments
+        if transport_kwargs.pop("debug_mode", None):
             _LOGGER.setLevel(logging.DEBUG)
 
-        kwargs = {k: v for k, v in kwargs.items() if k[:1] != "_"}  # anachronism
-        config: dict[str, Any] = kwargs.pop(SZ_CONFIG, {})
+        if config:
+            # We strictly prioritize explicit args over the config dict.
+            # However, if explicit args are default (False/0), we allow config to override.
+            # Since we cannot easily detect "user passed default", we rely on the logic
+            # that config dicts are legacy and users should migrate to explicit args.
+            disable_discovery = config.get("disable_discovery", disable_discovery)
+            enable_eavesdrop = config.get(SZ_ENABLE_EAVESDROP, enable_eavesdrop)
+            reduce_processing = config.get("reduce_processing", reduce_processing)
 
-        # Merge configs for Engine
-        engine_config = SCH_ENGINE_CONFIG(config)
-        gateway_config = SCH_GATEWAY_CONFIG(config)
+        # 2. Store Gateway Configuration
+        self._disable_discovery = disable_discovery
+        self._enable_eavesdrop = enable_eavesdrop
+        self._reduce_processing = reduce_processing
 
-        # We pass both sets of config to Engine.
-        # Engine's GatewayConfig.from_kwargs will handle them if definitions match.
-        combined_config = {**engine_config, **gateway_config}
-
-        # Apply discovery logic adjustments BEFORE Engine init
+        # 3. Apply Discovery Logic Adjustments
+        # These override user settings based on operating mode
         if input_file:
             # We need discovery to process the log file, even if sending is disabled
-            combined_config["disable_discovery"] = False
-        elif combined_config.get("disable_sending"):
+            self._disable_discovery = False
+        elif disable_sending:
             # If sending is disabled and not replaying, disable discovery
-            combined_config["disable_discovery"] = True
+            self._disable_discovery = True
 
+        # 4. Initialize Engine
         super().__init__(
             port_name,
             input_file=input_file,
-            port_config=port_config,
-            packet_log=packet_log,
+            disable_sending=disable_sending,
+            disable_qos=disable_qos,
+            enforce_known_list=enforce_known_list,
             block_list=block_list,
             known_list=known_list,
-            loop=loop,
+            packet_log=packet_log,
+            port_config=port_config,
             hgi_id=hgi_id,
-            transport_constructor=transport_constructor,
-            **combined_config,
+            sqlite_index=sqlite_index,
+            log_all_mqtt=log_all_mqtt,
+            loop=loop,
+            config=config,  # Pass config down so Engine can extract transport args
+            **transport_kwargs,
         )
 
-        if config.get(SZ_ENABLE_EAVESDROP):
+        if self._enable_eavesdrop:
             _LOGGER.warning(
                 f"{SZ_ENABLE_EAVESDROP}=True: this is strongly discouraged"
                 " for routine use (there be dragons here)"
             )
 
-        self._schema: dict[str, Any] = SCH_GLOBAL_SCHEMAS(kwargs)
+        # The schema might be mixed into transport_kwargs in legacy calls
+        self._schema: dict[str, Any] = SCH_GLOBAL_SCHEMAS(transport_kwargs)
 
         self._tcs: Evohome | None = None
 
@@ -233,30 +256,30 @@ class Gateway(Engine):
                 if system.dhw:
                     system.dhw._start_discovery_poller()
 
-        # NOTE: self._packet_log is guaranteed to be a dict by GatewayConfig
+        # NOTE: self._packet_log is guaranteed to be a dict by Engine
         _, self._pkt_log_listener = await set_pkt_logging_config(
-            cc_console=self.config.reduce_processing >= DONT_CREATE_MESSAGES,
+            cc_console=self._reduce_processing >= DONT_CREATE_MESSAGES,
             **self._packet_log,
         )
         if self._pkt_log_listener:
             self._pkt_log_listener.start()
 
-        # initialize SQLite index, set in _tx/Engine
+        # initialize SQLite index
         if self._sqlite_index:  # TODO(eb): default to True in Q1 2026
             _LOGGER.info("Ramses RF starts SQLite MessageIndex")
             # if activated in ramses_cc > Engine or set in tests
             self.create_sqlite_message_index()
 
-        # temporarily disable discovery, remember original state
-        saved_disable_discovery = self.config.disable_discovery
-        self.config = replace(self.config, disable_discovery=True)
+        # Temporarily disable discovery during schema loading
+        saved_disable_discovery = self._disable_discovery
+        self._disable_discovery = True
 
-        # Schema loading happens with discovery DISABLED to prevent side effects
-        load_schema(self, known_list=self._include, **self._schema)  # create faked too
-
-        # Restore discovery state BEFORE restoring cache or starting the engine
-        # This ensures the file replay (if any) occurs with discovery enabled
-        self.config = replace(self.config, disable_discovery=saved_disable_discovery)
+        try:
+            # Schema loading happens with discovery DISABLED to prevent side effects
+            load_schema(self, known_list=self._include, **self._schema)
+        finally:
+            # Restore discovery state
+            self._disable_discovery = saved_disable_discovery
 
         if cached_packets:
             await self._restore_cached_packets(cached_packets)
@@ -265,7 +288,7 @@ class Gateway(Engine):
 
         if (
             not self._disable_sending
-            and not self.config.disable_discovery
+            and not self._disable_discovery
             and start_discovery
         ):
             initiate_discovery(self.devices, self.systems)
@@ -313,13 +336,13 @@ class Gateway(Engine):
         """
         _LOGGER.debug("Gateway: Pausing engine...")
 
-        disc_flag = self.config.disable_discovery
-        self.config = replace(self.config, disable_discovery=True)
+        disc_flag = self._disable_discovery
+        self._disable_discovery = True
 
         try:
             await super()._pause(disc_flag, *args)
         except RuntimeError:
-            self.config = replace(self.config, disable_discovery=disc_flag)
+            self._disable_discovery = disc_flag
             raise
 
     async def _resume(self) -> tuple[Any]:
@@ -338,7 +361,7 @@ class Gateway(Engine):
         disc_flag = ret[0]
         args = tuple(ret[1:])
 
-        self.config = replace(self.config, disable_discovery=disc_flag)
+        self._disable_discovery = disc_flag
 
         return args
 
@@ -418,7 +441,6 @@ class Gateway(Engine):
             self._tcs = None
             self.devices = []
             self.device_by_id = {}
-
             self._prev_msg = None
             self._this_msg = None
 
@@ -430,7 +452,7 @@ class Gateway(Engine):
         # FIX: We need discovery enabled during replay to populate the schema,
         # but self._pause() set it to True. We force it to False here.
         # _resume() will restore the correct state (e.g., False) afterwards.
-        self.config = replace(self.config, disable_discovery=False)
+        self._disable_discovery = False
 
         if _clear_state:  # only intended for test suite use
             clear_state()
