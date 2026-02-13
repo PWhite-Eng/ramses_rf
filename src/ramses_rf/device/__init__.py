@@ -7,8 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from ramses_rf.const import DEV_TYPE_MAP
-from ramses_tx.const import DevType
-from ramses_tx.schemas import SZ_CLASS, SZ_FAKED
+from ramses_tx.const import SZ_CLASS, SZ_FAKED, DevType
 
 from .base import (  # noqa: F401, isort: skip, pylint: disable=unused-import
     BASE_CLASS_BY_SLUG as _BASE_CLASS_BY_SLUG,

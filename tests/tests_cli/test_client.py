@@ -35,9 +35,8 @@ from ramses_rf.database import MessageIndex
 from ramses_rf.gateway import Gateway
 from ramses_rf.schemas import SZ_CONFIG, SZ_DISABLE_DISCOVERY
 from ramses_tx import exceptions as exc
-from ramses_tx.const import SZ_SERIAL_PORT
+from ramses_tx.const import SZ_PACKET_LOG, SZ_SERIAL_PORT
 from ramses_tx.message import Message
-from ramses_tx.schemas import SZ_PACKET_LOG
 
 STDIN = io.StringIO("053  I --- 01:123456 --:------ 01:123456 3150 002 FC00\r\n")
 CMD = "RQ 01:123456 1F09 00"

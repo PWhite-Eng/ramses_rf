@@ -2,6 +2,7 @@
 """RAMSES RF - Test eavesdropping of a device class."""
 
 import json
+from dataclasses import replace
 from pathlib import Path, PurePath
 
 import pytest
@@ -30,7 +31,9 @@ async def test_packets_from_log_file(dir_name: Path) -> None:
     path = f"{dir_name}/packet.log"
 
     gwy = Gateway(None, input_file=path, config={"enable_eavesdrop": False})
-    gwy.config.enable_eavesdrop = True  # Test setting this config attr
+    gwy.config = replace(
+        gwy.config, enable_eavesdrop=True
+    )  # Test setting this config attr
 
     gwy.add_msg_handler(proc_log_line)
 

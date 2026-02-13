@@ -12,8 +12,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from logging.handlers import QueueListener
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from ramses_tx import (
@@ -35,16 +35,13 @@ from ramses_tx.const import (
     DEFAULT_NUM_REPEATS,
     DEFAULT_SEND_TIMEOUT,
     DEFAULT_WAIT_FOR_REPLY,
-    SZ_ACTIVE_HGI,
-)
-from ramses_tx.schemas import (
     SCH_ENGINE_CONFIG,
+    SZ_ACTIVE_HGI,
     SZ_BLOCK_LIST,
     SZ_ENFORCE_KNOWN_LIST,
     SZ_KNOWN_LIST,
-    PktLogConfigT,
-    PortConfigT,
 )
+from ramses_tx.typing import PktLogConfigT, PortConfigT
 
 from .const import DONT_CREATE_MESSAGES, SZ_DEVICES, SZ_READER_TASK
 from .database import MessageIndex
@@ -57,7 +54,6 @@ from .schemas import (
     SZ_ALIAS,
     SZ_CLASS,
     SZ_CONFIG,
-    SZ_DISABLE_DISCOVERY,
     SZ_ENABLE_EAVESDROP,
     SZ_FAKED,
     SZ_MAIN_TCS,
@@ -133,6 +129,14 @@ class Gateway(Engine):
         kwargs = {k: v for k, v in kwargs.items() if k[:1] != "_"}  # anachronism
         config: dict[str, Any] = kwargs.pop(SZ_CONFIG, {})
 
+        # Merge configs for Engine
+        engine_config = SCH_ENGINE_CONFIG(config)
+        gateway_config = SCH_GATEWAY_CONFIG(config)
+
+        # We pass both sets of config to Engine.
+        # Engine's GatewayConfig.from_kwargs will handle them if definitions match.
+        combined_config = {**engine_config, **gateway_config}
+
         super().__init__(
             port_name,
             input_file=input_file,
@@ -143,18 +147,18 @@ class Gateway(Engine):
             loop=loop,
             hgi_id=hgi_id,
             transport_constructor=transport_constructor,
-            **SCH_ENGINE_CONFIG(config),
+            **combined_config,
         )
 
         if self._disable_sending:
-            config[SZ_DISABLE_DISCOVERY] = True
+            self.config = replace(self.config, disable_discovery=True)
+
         if config.get(SZ_ENABLE_EAVESDROP):
             _LOGGER.warning(
                 f"{SZ_ENABLE_EAVESDROP}=True: this is strongly discouraged"
                 " for routine use (there be dragons here)"
             )
 
-        self.config = SimpleNamespace(**SCH_GATEWAY_CONFIG(config))
         self._schema: dict[str, Any] = SCH_GLOBAL_SCHEMAS(kwargs)
 
         self._tcs: Evohome | None = None
@@ -223,7 +227,7 @@ class Gateway(Engine):
                 if system.dhw:
                     system.dhw._start_discovery_poller()
 
-        _, self._pkt_log_listener = await set_pkt_logging_config(  # type: ignore[arg-type]
+        _, self._pkt_log_listener = await set_pkt_logging_config(
             cc_console=self.config.reduce_processing >= DONT_CREATE_MESSAGES,
             **self._packet_log,
         )
@@ -237,10 +241,8 @@ class Gateway(Engine):
             self.create_sqlite_message_index()
 
         # temporarily turn on discovery, remember original state
-        self.config.disable_discovery, disable_discovery = (
-            True,
-            self.config.disable_discovery,
-        )
+        disable_discovery = self.config.disable_discovery
+        self.config = replace(self.config, disable_discovery=True)
 
         load_schema(self, known_list=self._include, **self._schema)  # create faked too
 
@@ -249,7 +251,7 @@ class Gateway(Engine):
             await self._restore_cached_packets(cached_packets)
 
         # reset discovery to original state
-        self.config.disable_discovery = disable_discovery
+        self.config = replace(self.config, disable_discovery=disable_discovery)
 
         if (
             not self._disable_sending
@@ -301,12 +303,13 @@ class Gateway(Engine):
         """
         _LOGGER.debug("Gateway: Pausing engine...")
 
-        self.config.disable_discovery, disc_flag = True, self.config.disable_discovery
+        disc_flag = self.config.disable_discovery
+        self.config = replace(self.config, disable_discovery=True)
 
         try:
             await super()._pause(disc_flag, *args)
         except RuntimeError:
-            self.config.disable_discovery = disc_flag
+            self.config = replace(self.config, disable_discovery=disc_flag)
             raise
 
     async def _resume(self) -> tuple[Any]:
@@ -317,13 +320,15 @@ class Gateway(Engine):
         :returns: A tuple of arguments saved during the pause.
         :rtype: tuple[Any]
         """
-        args: tuple[Any]
+        args: tuple[Any, ...]
 
         _LOGGER.debug("Gateway: Resuming engine...")
 
-        # args_tuple = await super()._resume()
-        # self.config.disable_discovery, *args = args_tuple  # type: ignore[assignment]
-        self.config.disable_discovery, *args = await super()._resume()  # type: ignore[assignment]
+        ret = await super()._resume()
+        disc_flag = ret[0]
+        args = tuple(ret[1:])
+
+        self.config = replace(self.config, disable_discovery=disc_flag)
 
         return args
 

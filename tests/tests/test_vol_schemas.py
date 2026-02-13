@@ -13,8 +13,8 @@ from ramses_rf.schemas import (
     SCH_GLOBAL_SCHEMAS_DICT,
     SCH_RESTORE_CACHE_DICT,
 )
+from ramses_tx.const import SCH_ENGINE_DICT
 from ramses_tx.schemas import (
-    SCH_ENGINE_DICT,
     SCH_GLOBAL_TRAITS_DICT,
     sch_packet_log_dict_factory,
     sch_serial_port_dict_factory,

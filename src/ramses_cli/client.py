@@ -24,16 +24,17 @@ from ramses_rf.schemas import (
     SZ_REDUCE_PROCESSING,
 )
 from ramses_tx import is_valid_dev_id
-from ramses_tx.const import SZ_EVOFW_FLAG, SZ_SERIAL_PORT
-from ramses_tx.logger import CONSOLE_COLS, DEFAULT_DATEFMT, DEFAULT_FMT
-from ramses_tx.schemas import (
+from ramses_tx.const import (
     SZ_DISABLE_QOS,
     SZ_DISABLE_SENDING,
     SZ_ENFORCE_KNOWN_LIST,
+    SZ_EVOFW_FLAG,
     SZ_FILE_NAME,
     SZ_KNOWN_LIST,
     SZ_PACKET_LOG,
+    SZ_SERIAL_PORT,
 )
+from ramses_tx.logger import CONSOLE_COLS, DEFAULT_DATEFMT, DEFAULT_FMT
 
 from .debug import SZ_DBG_MODE, start_debugging
 from .discovery import GET_FAULTS, GET_SCHED, SET_SCHED, spawn_scripts

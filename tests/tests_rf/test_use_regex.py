@@ -8,8 +8,8 @@ import pytest
 import serial  # type: ignore[import-untyped]
 
 from ramses_rf import Command, Gateway, Packet
+from ramses_tx.const import SZ_INBOUND, SZ_OUTBOUND, SZ_USE_REGEX
 from ramses_tx.protocol import RamsesProtocol
-from ramses_tx.schemas import SZ_INBOUND, SZ_OUTBOUND, SZ_USE_REGEX
 from ramses_tx.transports.base import _str
 from tests_rf.virtual_rf import VirtualRf
 

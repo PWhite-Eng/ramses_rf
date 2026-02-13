@@ -28,3 +28,35 @@ DeviceTraitsT = TypedDict(
 DeviceListT: TypeAlias = dict[DeviceIdT, DeviceTraitsT]
 
 RamsesTransportT = TypeVar("RamsesTransportT", bound="RamsesTransport")
+
+
+class PortConfigT(TypedDict):
+    """
+    Type definition for serial port configuration.
+
+    :param baudrate: The communication speed (e.g., 57600, 115200).
+    :param dsrdtr: Enable DSR/DTR flow control.
+    :param rtscts: Enable RTS/CTS flow control.
+    :param timeout: Read timeout in seconds.
+    :param xonxoff: Enable software flow control.
+    """
+
+    baudrate: int
+    dsrdtr: bool
+    rtscts: bool
+    timeout: int
+    xonxoff: bool
+
+
+class PktLogConfigT(TypedDict):
+    """
+    Type definition for packet logging configuration.
+
+    :param file_name: The name of the log file.
+    :param rotate_backups: The number of backup files to keep.
+    :param rotate_bytes: The maximum file size in bytes before rotation, or None to disable.
+    """
+
+    file_name: str
+    rotate_backups: int
+    rotate_bytes: int | None

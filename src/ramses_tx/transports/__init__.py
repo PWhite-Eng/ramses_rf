@@ -52,8 +52,7 @@ from .serial import PortTransport, comports, create_serial_port, is_hgi80
 
 if TYPE_CHECKING:
     from ..protocol import RamsesProtocol
-    from ..schemas import PortConfigT
-    from ..typing import SerPortNameT
+    from ..typing import PortConfigT, SerPortNameT
 
 
 _LOGGER = logging.getLogger(__name__)

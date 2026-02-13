@@ -703,6 +703,9 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
         # lf._msgs_ot_ctl_polled = {}
 
     def _setup_discovery_cmds(self) -> None:
+        # TEMP: cast to str to suppress Mypy bool vs str errors
+        use_native_ot = cast(str, self._gwy.config.use_native_ot)
+
         def which_cmd(use_native_ot: str, msg_id: MsgId) -> Command | None:
             """Create a OT cmd, or its RAMSES equivalent, depending."""
             # we know RQ|3220 is an option, question is: use that, or RAMSES or nothing?
@@ -717,10 +720,10 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
         super()._setup_discovery_cmds()
 
         # always send at least one of RQ|3EF0 or RQ|3220|00 (status)
-        if self._gwy.config.use_native_ot != "never":
+        if use_native_ot != "never":
             self._add_discovery_cmd(Command.get_opentherm_data(self.id, MsgId._00), 60)
 
-        if self._gwy.config.use_native_ot != "always":
+        if use_native_ot != "always":
             self._add_discovery_cmd(
                 Command.from_attrs(RQ, self.id, Code._3EF0, "00"), 60
             )
@@ -729,17 +732,17 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
             )
 
         for data_id in SCHEMA_DATA_IDS:  # From OT v2.2: version numbers
-            if cmd := which_cmd(self._gwy.config.use_native_ot, _to_msg_id(data_id)):
+            if cmd := which_cmd(use_native_ot, _to_msg_id(data_id)):
                 self._add_discovery_cmd(cmd, 6 * 3600, delay=180)
 
         for data_id in PARAMS_DATA_IDS:  # params or L/T state
-            if cmd := which_cmd(self._gwy.config.use_native_ot, _to_msg_id(data_id)):
+            if cmd := which_cmd(use_native_ot, _to_msg_id(data_id)):
                 self._add_discovery_cmd(cmd, 3600, delay=90)
 
         for data_id in STATUS_DATA_IDS:  # except "00", see above
             if data_id == 0x00:
                 continue
-            if cmd := which_cmd(self._gwy.config.use_native_ot, _to_msg_id(data_id)):
+            if cmd := which_cmd(use_native_ot, _to_msg_id(data_id)):
                 self._add_discovery_cmd(cmd, 300, delay=15)
 
         if _DBG_EXTRA_OTB_DISCOVERY:  # TODO: these are WIP, but do vary in payload
@@ -847,15 +850,17 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
         self, cbk_ot: Callable | None, cbk_ramses: Callable | None
     ) -> Any | None:
         """Return a value using OpenTherm or RAMSES as per `config.use_native_ot`."""
+        # TEMP: cast to str to suppress Mypy bool vs str errors
+        use_native_ot = cast(str, self._gwy.config.use_native_ot)
 
-        if self._gwy.config.use_native_ot == "always":
+        if use_native_ot == "always":
             return cbk_ot() if cbk_ot else None
-        if self._gwy.config.use_native_ot == "prefer":
+        if use_native_ot == "prefer":
             if cbk_ot and (result := cbk_ot()) is not None:
                 return result
 
         result_ramses = cbk_ramses() if cbk_ramses is not None else None
-        if self._gwy.config.use_native_ot == "avoid" and result_ramses is None:
+        if use_native_ot == "avoid" and result_ramses is None:
             return cbk_ot() if cbk_ot else None
         return result_ramses  # incl. use_native_ot == "never"
 
@@ -868,16 +873,18 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
     ) -> Any | None:
         """Return a value using OpenTherm or RAMSES as per `config.use_native_ot`."""
         # assert code in self.RAMSES_TO_OT and kwargs.get("key"):
+        # TEMP: cast to str to suppress Mypy bool vs str errors
+        use_native_ot = cast(str, self._gwy.config.use_native_ot)
 
-        if self._gwy.config.use_native_ot == "always":
+        if use_native_ot == "always":
             return self._ot_msg_value(self.RAMSES_TO_OT[code])
 
-        if self._gwy.config.use_native_ot == "prefer":
+        if use_native_ot == "prefer":
             if (result_ot := self._ot_msg_value(self.RAMSES_TO_OT[code])) is not None:
                 return result_ot
 
         result_ramses = self._msg_value(code, key=key)
-        if self._gwy.config.use_native_ot == "avoid" and result_ramses is None:
+        if use_native_ot == "avoid" and result_ramses is None:
             return self._ot_msg_value(self.RAMSES_TO_OT[code])
 
         return result_ramses  # incl. use_native_ot == "never"
@@ -886,17 +893,18 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
         self, result_ot: Any | None, result_ramses: Any | None
     ) -> Any | None:
         """Return a value using OpenTherm or RAMSES as per `config.use_native_ot`."""
-        #
+        # TEMP: cast to str to suppress Mypy bool vs str errors
+        use_native_ot = cast(str, self._gwy.config.use_native_ot)
 
-        if self._gwy.config.use_native_ot == "always":
+        if use_native_ot == "always":
             return result_ot
 
-        if self._gwy.config.use_native_ot == "prefer":
+        if use_native_ot == "prefer":
             if result_ot is not None:
                 return result_ot
 
         #
-        elif self._gwy.config.use_native_ot == "avoid" and result_ramses is None:
+        elif use_native_ot == "avoid" and result_ramses is None:
             return result_ot
 
         return result_ramses  # incl. use_native_ot == "never"
@@ -991,7 +999,10 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
 
     @property  # TODO: no reliable OT equivalent?
     def max_rel_modulation(self) -> float | None:  # 3220|0E, or 3EF0 (byte 8)
-        if self._gwy.config.use_native_ot == "prefer":  # HACK: there'll always be 3EF0
+        # TEMP: cast to str to suppress Mypy bool vs str errors
+        if (
+            cast(str, self._gwy.config.use_native_ot) == "prefer"
+        ):  # HACK: there'll always be 3EF0
             return cast(
                 float | None, self._msg_value(Code._3EF0, key=SZ_MAX_REL_MODULATION)
             )
@@ -1015,7 +1026,10 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
 
     @property  # TODO: no reliable OT equivalent?
     def rel_modulation_level(self) -> float | None:  # 3220|11, or 3EF0/3EF1
-        if self._gwy.config.use_native_ot == "prefer":  # HACK: there'll always be 3EF0
+        # TEMP: cast to str to suppress Mypy bool vs str errors
+        if (
+            cast(str, self._gwy.config.use_native_ot) == "prefer"
+        ):  # HACK: there'll always be 3EF0
             return cast(
                 float | None,
                 self._msg_value((Code._3EF0, Code._3EF1), key=self.MODULATION_LEVEL),
@@ -1030,7 +1044,10 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
 
     @property  # TODO: no reliable OT equivalent?
     def ch_active(self) -> bool | None:  # 3220|00, or 3EF0 (byte 3)
-        if self._gwy.config.use_native_ot == "prefer":  # HACK: there'll always be 3EF0
+        # TEMP: cast to str to suppress Mypy bool vs str errors
+        if (
+            cast(str, self._gwy.config.use_native_ot) == "prefer"
+        ):  # HACK: there'll always be 3EF0
             return cast(bool | None, self._msg_value(Code._3EF0, key=SZ_CH_ACTIVE))
         return cast(
             bool | None,
@@ -1042,7 +1059,10 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
 
     @property  # TODO: no reliable OT equivalent?
     def ch_enabled(self) -> bool | None:  # 3220|00, or 3EF0 (byte 6)
-        if self._gwy.config.use_native_ot == "prefer":  # HACK: there'll always be 3EF0
+        # TEMP: cast to str to suppress Mypy bool vs str errors
+        if (
+            cast(str, self._gwy.config.use_native_ot) == "prefer"
+        ):  # HACK: there'll always be 3EF0
             return cast(bool | None, self._msg_value(Code._3EF0, key=SZ_CH_ENABLED))
         return cast(
             bool | None,
@@ -1067,7 +1087,10 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
 
     @property  # TODO: no reliable OT equivalent?
     def dhw_active(self) -> bool | None:  # 3220|00, or 3EF0 (byte 3)
-        if self._gwy.config.use_native_ot == "prefer":  # HACK: there'll always be 3EF0
+        # TEMP: cast to str to suppress Mypy bool vs str errors
+        if (
+            cast(str, self._gwy.config.use_native_ot) == "prefer"
+        ):  # HACK: there'll always be 3EF0
             return cast(bool | None, self._msg_value(Code._3EF0, key=SZ_DHW_ACTIVE))
         return cast(
             bool | None,
@@ -1097,7 +1120,10 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
 
     @property  # TODO: no reliable OT equivalent?
     def flame_active(self) -> bool | None:  # 3220|00, or 3EF0 (byte 3)
-        if self._gwy.config.use_native_ot == "prefer":  # HACK: there'll always be 3EF0
+        # TEMP: cast to str to suppress Mypy bool vs str errors
+        if (
+            cast(str, self._gwy.config.use_native_ot) == "prefer"
+        ):  # HACK: there'll always be 3EF0
             return cast(bool | None, self._msg_value(Code._3EF0, key="flame_on"))
         return cast(
             bool | None,

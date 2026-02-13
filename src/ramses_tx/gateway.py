@@ -12,10 +12,11 @@ import asyncio
 import logging
 from collections.abc import Callable
 from datetime import datetime as dt
-from typing import TYPE_CHECKING, Any, Never
+from typing import TYPE_CHECKING, Any
 
 from .address import ALL_DEV_ADDR, HGI_DEV_ADDR, NON_DEV_ADDR
 from .command import Command
+from .config import GatewayConfig
 from .const import (
     DEFAULT_DISABLE_QOS,
     DEFAULT_GAP_DURATION,
@@ -24,26 +25,17 @@ from .const import (
     DEFAULT_SEND_TIMEOUT,
     DEFAULT_WAIT_FOR_REPLY,
     SZ_ACTIVE_HGI,
+    SZ_PACKET_LOG,
+    SZ_PORT_CONFIG,
+    SZ_PORT_NAME,
     Priority,
 )
 from .message import Message
 from .models import QosParams
 from .packet import Packet
 from .protocol import protocol_factory
-from .schemas import (
-    SZ_DISABLE_QOS,
-    SZ_DISABLE_SENDING,
-    SZ_ENFORCE_KNOWN_LIST,
-    SZ_LOG_ALL_MQTT,
-    SZ_PACKET_LOG,
-    SZ_PORT_CONFIG,
-    SZ_PORT_NAME,
-    SZ_SQLITE_INDEX,
-    PktLogConfigT,
-    PortConfigT,
-    select_device_filter_mode,
-)
 from .transports import transport_factory
+from .typing import PktLogConfigT, PortConfigT
 
 from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
     I_,
@@ -75,52 +67,57 @@ class Engine:
         self,
         port_name: str | None,
         input_file: str | None = None,
-        port_config: PortConfigT | None = None,
-        packet_log: PktLogConfigT | None = None,
-        block_list: DeviceListT | None = None,
-        known_list: DeviceListT | None = None,
-        hgi_id: str | None = None,
-        loop: asyncio.AbstractEventLoop | None = None,
         **kwargs: Any,
     ) -> None:
-        if port_name and input_file:
+
+        # 1. Create Config
+        self.config = GatewayConfig.from_kwargs(port_name, input_file, **kwargs)
+
+        # 2. Validation
+        if not self.config.port_name and not input_file:
+            raise TypeError("Either a port_name or an input_file must be specified")
+
+        if self.config.port_name and input_file:
             _LOGGER.warning(
                 "Port (%s) specified, so file (%s) ignored", port_name, input_file
             )
-            input_file = None
+            # We strictly prioritize the port if both are given, but input_file
+            # is kept in config for logging purposes if needed.
 
-        self._disable_sending = kwargs.pop(SZ_DISABLE_SENDING, None)
-        if input_file:
-            self._disable_sending = True
-        elif not port_name:
-            raise TypeError("Either a port_name or an input_file must be specified")
-
-        self.ser_name = port_name
+        self.ser_name = self.config.port_name
         self._input_file = input_file
 
-        self._port_config: PortConfigT | dict[Never, Never] = port_config or {}
-        self._packet_log: PktLogConfigT | dict[Never, Never] = packet_log or {}
-        self._loop = loop or asyncio.get_running_loop()
+        # 3. Use Config values instead of loose attributes
+        self._loop = kwargs.get("loop") or asyncio.get_running_loop()
 
-        self._exclude: DeviceListT = block_list or {}
-        self._include: DeviceListT = known_list or {}
+        # We keep _kwargs only for extra transport params (like auth, etc)
+        # We strip out keys we know we handled in GatewayConfig
+        self._kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k
+            not in ("block_list", "known_list", "hgi_id", "port_config", "packet_log")
+        }
+
+        self._disable_sending = self.config.disable_sending
+
+        # Access typed dicts from config
+        self._port_config: PortConfigT = self.config.port_config
+        self._packet_log: PktLogConfigT = self.config.packet_log
+
+        self._exclude: DeviceListT = self.config.block_list
+        self._include: DeviceListT = self.config.known_list
         self._unwanted: list[DeviceIdT] = [
             NON_DEV_ADDR.id,
             ALL_DEV_ADDR.id,
             "01:000001",  # type: ignore[list-item]  # why this one?
         ]
-        self._enforce_known_list = select_device_filter_mode(
-            kwargs.pop(SZ_ENFORCE_KNOWN_LIST, None),
-            self._include,
-            self._exclude,
-        )
-        self._sqlite_index = kwargs.pop(
-            SZ_SQLITE_INDEX, False
-        )  # TODO Q1 2026: default True
-        self._log_all_mqtt = kwargs.pop(SZ_LOG_ALL_MQTT, False)
-        self._kwargs: dict[str, Any] = kwargs  # HACK
 
-        self._hgi_id = hgi_id
+        self._enforce_known_list = self.config.enforce_known_list
+        self._sqlite_index = self.config.use_sqlite_index
+        self._log_all_mqtt = self.config.log_all_mqtt
+
+        self._hgi_id = self.config.hgi_id
         if self._hgi_id:
             self._kwargs[SZ_ACTIVE_HGI] = self._hgi_id
 
@@ -163,11 +160,15 @@ class Engine:
         self._protocol = protocol_factory(
             msg_handler,
             disable_sending=self._disable_sending,
-            disable_qos=self._kwargs.pop(SZ_DISABLE_QOS, DEFAULT_DISABLE_QOS),
+            disable_qos=self.config.disable_qos or DEFAULT_DISABLE_QOS,
             enforce_include_list=self._enforce_known_list,
             exclude_list=self._exclude,
             include_list=self._include,
         )
+
+    # ... rest of file (add_msg_handler, etc.)
+    # Be sure to include the rest of the file logic here as needed
+    # or ensure you paste into the existing file correctly.
 
     def add_msg_handler(
         self,
@@ -203,6 +204,12 @@ class Engine:
         else:  # if self._input_file:
             pkt_source[SZ_PACKET_LOG] = self._input_file  # filename as string
 
+        # Create a copy of kwargs and remove explicit args to avoid collisions
+        kwargs = self._kwargs.copy()
+        kwargs.pop("loop", None)
+        kwargs.pop("disable_sending", None)
+        kwargs.pop("log_all", None)
+
         # incl. await protocol.wait_for_connection_made(timeout=5)
         self._transport = await transport_factory(
             self._protocol,
@@ -210,7 +217,7 @@ class Engine:
             loop=self._loop,
             log_all=self._log_all_mqtt,
             **pkt_source,
-            **self._kwargs,  # HACK: odd/misc params, e.g. comms_params
+            **kwargs,  # HACK: odd/misc params, e.g. comms_params
         )
 
         self._kwargs = {}  # HACK
@@ -219,7 +226,7 @@ class Engine:
 
         # TODO: should this be removed (if so, pytest all before committing)
         if self._input_file:
-            await self._protocol.wait_for_connection_lost()
+            await self._protocol.wait_for_connection_lost(timeout=10.0)
 
     async def stop(self) -> None:
         """Close the transport (will stop the protocol)."""

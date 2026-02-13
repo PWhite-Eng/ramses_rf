@@ -43,8 +43,7 @@ from .base import (
 if TYPE_CHECKING:
     from ..packet import Packet
     from ..protocol import RamsesProtocol
-    from ..schemas import PortConfigT
-    from ..typing import SerPortNameT
+    from ..typing import PortConfigT, SerPortNameT
 
     # STUB: Define a safe type stub for Mypy to use within this file
     class Serial:

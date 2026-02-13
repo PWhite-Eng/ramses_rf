@@ -12,16 +12,116 @@ from enum import EnumCheck, IntEnum, StrEnum, verify
 from types import SimpleNamespace
 from typing import Any, Final, Literal, NoReturn
 
+import voluptuous as vol
+
 DEFAULT_TIMEOUT_PORT: Final[float] = 3
 DEFAULT_TIMEOUT_MQTT: Final[float] = 60  # Updated from 9s to 60s for robustness
 
 # String constants (previously imported from schemas)
+SZ_ALIAS: Final = "alias"
+SZ_CLASS: Final = "class"
+SZ_FAKED: Final = "faked"
+SZ_SCHEME: Final = "scheme"
+
+SZ_BLOCK_LIST: Final = "block_list"
+SZ_KNOWN_LIST: Final = "known_list"
+
 SZ_BOUND_TO: Final = "bound"
 SZ_EVOFW_FLAG: Final = "evofw_flag"
 SZ_INBOUND: Final = "inbound"
 SZ_OUTBOUND: Final = "outbound"
 SZ_SERIAL_PORT: Final = "serial_port"
 SZ_SERIAL_PORT_CONFIG: Final = "port_config"
+SZ_DISABLE_QOS: Final = "disable_qos"
+SZ_ENFORCE_KNOWN_LIST: Final[str] = f"enforce_{SZ_KNOWN_LIST}"
+
+SZ_COMMS_PARAMS: Final = "comms_params"
+SZ_DUTY_CYCLE_LIMIT: Final = "duty_cycle_limit"
+SZ_GAP_BETWEEN_WRITES: Final = "gap_between_writes"
+SZ_ECHO_TIMEOUT: Final = "echo_timeout"
+SZ_RPLY_TIMEOUT: Final = "reply_timeout"
+
+# Gateway (engine) configuration
+
+SZ_DISABLE_SENDING: Final = "disable_sending"
+SZ_AUTOSTART: Final = "autostart"
+SZ_SQLITE_INDEX: Final = (
+    "sqlite_index"  # temporary 0.52.x SQLite dev config option in ramses_cc
+)
+SZ_LOG_ALL_MQTT: Final = "log_all_mqtt"
+SZ_USE_REGEX: Final = "use_regex"
+
+# default values for transmit rate governers...
+DUTY_CYCLE_DURATION: Final[int] = 60  # time window (seconds) where rate limiting occurs
+MAX_DUTY_CYCLE_RATE: Final[float] = 0.01  #    % bandwidth used per cycle
+MAX_TRANSMIT_RATE_TOKENS: Final[int] = 80  # transmits per cycle
+
+#: Minimum gap between writes (seconds)
+MIN_INTER_WRITE_GAP: Final[float] = 0.05
+DEFAULT_GAP_DURATION: Final[float] = MIN_INTER_WRITE_GAP
+DEFAULT_MAX_RETRIES: Final[int] = 3
+DEFAULT_NUM_REPEATS: Final[int] = 0
+
+#: Waiting for echo pkt after cmd sent (seconds)
+# NOTE: Increased to 3.0s to support high-latency transports (e.g., MQTT)
+DEFAULT_ECHO_TIMEOUT: Final[float] = 3.00
+
+#: Waiting for reply pkt after echo pkt rcvd (seconds)
+# NOTE: Increased to 3.0s to support high-latency transports (e.g., MQTT)
+DEFAULT_RPLY_TIMEOUT: Final[float] = 3.00
+DEFAULT_BUFFER_SIZE: Final[int] = 32
+
+# 0/5: Packet source configuration
+
+SCH_COMMS_PARAMS = vol.Schema(
+    {
+        vol.Required(SZ_DUTY_CYCLE_LIMIT, default=MAX_DUTY_CYCLE_RATE): vol.All(
+            float, vol.Range(min=0.005, max=0.2)
+        ),
+        vol.Required(SZ_GAP_BETWEEN_WRITES, default=MIN_INTER_WRITE_GAP): vol.All(
+            float, vol.Range(min=0.05, max=1.0)
+        ),
+        vol.Required(SZ_ECHO_TIMEOUT, default=DEFAULT_ECHO_TIMEOUT): vol.All(
+            float, vol.Range(min=0.01, max=1.0)
+        ),
+        vol.Required(SZ_RPLY_TIMEOUT, default=DEFAULT_RPLY_TIMEOUT): vol.All(
+            float, vol.Range(min=0.01, max=1.0)
+        ),
+    },
+    extra=vol.PREVENT_EXTRA,
+)
+
+# 1/5: Packet source configuration
+SZ_INPUT_FILE: Final = "input_file"
+SZ_PACKET_SOURCE: Final = "packet_source"
+
+
+# 2/5: Packet log configuration
+SZ_FILE_NAME: Final = "file_name"
+SZ_PACKET_LOG: Final = "packet_log"
+SZ_ROTATE_BACKUPS: Final = "rotate_backups"
+SZ_ROTATE_BYTES: Final = "rotate_bytes"
+
+SCH_ENGINE_DICT = {
+    vol.Optional(SZ_DISABLE_SENDING, default=False): bool,
+    vol.Optional(SZ_AUTOSTART, default=False): bool,
+    vol.Optional(SZ_DISABLE_QOS, default=None): vol.Any(
+        None,  # None is selective QoS (e.g. QoS only for bindings, schedule, etc.)
+        bool,
+    ),  # in the long term, this default to be True (not None)
+    vol.Optional(SZ_ENFORCE_KNOWN_LIST, default=False): bool,
+    vol.Optional(SZ_EVOFW_FLAG): vol.Any(None, str),
+    # vol.Optional(SZ_PORT_CONFIG): SCH_SERIAL_PORT_CONFIG,
+    vol.Optional(
+        SZ_SQLITE_INDEX, default=False
+    ): bool,  # temporary 0.52.x dev config option
+    vol.Optional(
+        SZ_LOG_ALL_MQTT, default=False
+    ): bool,  # log all incoming MQTT traffic config option
+    vol.Optional(SZ_USE_REGEX): dict,  # vol.All(ConvertNullToDict(), dict),
+    vol.Optional(SZ_COMMS_PARAMS): SCH_COMMS_PARAMS,
+}
+SCH_ENGINE_CONFIG = vol.Schema(SCH_ENGINE_DICT, extra=vol.REMOVE_EXTRA)
 
 SIGNATURE_GAP_SECS: Final[float] = 0.05
 SIGNATURE_MAX_TRYS: Final[int] = 40  # was: 24
@@ -42,15 +142,6 @@ DEV_MODE = __dev_mode__
 DEFAULT_DISABLE_QOS: Final[bool | None] = None
 DEFAULT_WAIT_FOR_REPLY: Final[bool | None] = None
 
-#: Waiting for echo pkt after cmd sent (seconds)
-# NOTE: Increased to 3.0s to support high-latency transports (e.g., MQTT)
-DEFAULT_ECHO_TIMEOUT: Final[float] = 3.00
-
-#: Waiting for reply pkt after echo pkt rcvd (seconds)
-# NOTE: Increased to 3.0s to support high-latency transports (e.g., MQTT)
-DEFAULT_RPLY_TIMEOUT: Final[float] = 3.00
-DEFAULT_BUFFER_SIZE: Final[int] = 32
-
 #: Total waiting for successful send (seconds)
 DEFAULT_SEND_TIMEOUT: Final[float] = 20.0
 #: For a command to be sent, incl. queuing time (seconds)
@@ -59,11 +150,16 @@ MAX_SEND_TIMEOUT: Final[float] = 20.0
 #: For a command to be re-sent (not incl. 1st send)
 MAX_RETRY_LIMIT: Final[int] = 3
 
-#: Minimum gap between writes (seconds)
-MIN_INTER_WRITE_GAP: Final[float] = 0.05
-DEFAULT_GAP_DURATION: Final[float] = MIN_INTER_WRITE_GAP
-DEFAULT_MAX_RETRIES: Final[int] = 3
-DEFAULT_NUM_REPEATS: Final[int] = 0
+# 3/5: Serial port configuration
+SZ_PORT_CONFIG: Final = "port_config"
+SZ_PORT_NAME: Final = "port_name"
+# SZ_SERIAL_PORT: Final = "serial_port" # defined in const.py
+
+SZ_BAUDRATE: Final = "baudrate"
+SZ_DSRDTR: Final = "dsrdtr"
+SZ_RTSCTS: Final = "rtscts"
+SZ_TIMEOUT: Final = "timeout"
+SZ_XONXOFF: Final = "xonxoff"
 
 SZ_QOS: Final = "qos"
 
@@ -72,18 +168,12 @@ SZ_GAP_DURATION: Final = "gap_duration"
 SZ_MAX_RETRIES: Final = "max_retries"
 SZ_NUM_REPEATS: Final = "num_repeats"
 SZ_PRIORITY: Final = "priority"
-SZ_TIMEOUT: Final = "timeout"
 
 
 # used by transport...
 SZ_ACTIVE_HGI: Final = "active_gwy"
 SZ_SIGNATURE: Final = "signature"
 SZ_IS_EVOFW3: Final = "is_evofw3"
-
-# default values for transmit rate governers...
-DUTY_CYCLE_DURATION: Final[int] = 60  # time window (seconds) where rate limiting occurs
-MAX_DUTY_CYCLE_RATE: Final[float] = 0.01  #    % bandwidth used per cycle
-MAX_TRANSMIT_RATE_TOKENS: Final[int] = 80  # transmits per cycle
 
 
 # used by schedule.py...

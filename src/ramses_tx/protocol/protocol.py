@@ -19,14 +19,16 @@ from ..const import (
     DEFAULT_NUM_REPEATS,
     DEV_TYPE_MAP,
     SZ_ACTIVE_HGI,
+    SZ_BLOCK_LIST,
+    SZ_CLASS,
     SZ_IS_EVOFW3,
+    SZ_KNOWN_LIST,
     DevType,
     Priority,
 )
 from ..message import Message
 from ..models import QosParams
 from ..packet import Packet
-from ..schemas import SZ_BLOCK_LIST, SZ_CLASS, SZ_KNOWN_LIST
 from .const import _DBG_DISABLE_IMPERSONATION_ALERTS, _DBG_FORCE_LOG_PACKETS
 from .fsm import ProtocolContext
 from .interfaces import IPacketSender

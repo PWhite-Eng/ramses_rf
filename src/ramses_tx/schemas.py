@@ -8,71 +8,39 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any, Final, Never, TypedDict, TypeVar
+from typing import Any, Never, TypeVar
 
 import voluptuous as vol
 
 from .const import (
-    DEFAULT_ECHO_TIMEOUT,
-    DEFAULT_RPLY_TIMEOUT,
     DEV_TYPE_MAP,
     DEVICE_ID_REGEX,
-    MAX_DUTY_CYCLE_RATE,
-    MIN_INTER_WRITE_GAP,
+    SZ_ALIAS,
+    SZ_BAUDRATE,
+    SZ_BLOCK_LIST,
     SZ_BOUND_TO,
-    SZ_EVOFW_FLAG,
+    SZ_CLASS,
+    SZ_DSRDTR,
+    SZ_ENFORCE_KNOWN_LIST,
+    SZ_FAKED,
+    SZ_FILE_NAME,
     SZ_INBOUND as SZ_INBOUND,
+    SZ_KNOWN_LIST,
     SZ_OUTBOUND as SZ_OUTBOUND,
+    SZ_PACKET_LOG,
+    SZ_PORT_NAME,
+    SZ_ROTATE_BACKUPS,
+    SZ_ROTATE_BYTES,
+    SZ_RTSCTS,
+    SZ_SCHEME,
     SZ_SERIAL_PORT,
     SZ_SERIAL_PORT_CONFIG as SZ_SERIAL_PORT_CONFIG,
+    SZ_TIMEOUT,
+    SZ_XONXOFF,
 )
-from .typing import DeviceListT
+from .typing import DeviceListT, PktLogConfigT, PortConfigT
 
 _LOGGER = logging.getLogger(__name__)
-
-# 0/5: Packet source configuration
-SZ_COMMS_PARAMS: Final = "comms_params"
-SZ_DUTY_CYCLE_LIMIT: Final = "duty_cycle_limit"
-SZ_GAP_BETWEEN_WRITES: Final = "gap_between_writes"
-SZ_ECHO_TIMEOUT: Final = "echo_timeout"
-SZ_RPLY_TIMEOUT: Final = "reply_timeout"
-
-SCH_COMMS_PARAMS = vol.Schema(
-    {
-        vol.Required(SZ_DUTY_CYCLE_LIMIT, default=MAX_DUTY_CYCLE_RATE): vol.All(
-            float, vol.Range(min=0.005, max=0.2)
-        ),
-        vol.Required(SZ_GAP_BETWEEN_WRITES, default=MIN_INTER_WRITE_GAP): vol.All(
-            float, vol.Range(min=0.05, max=1.0)
-        ),
-        vol.Required(SZ_ECHO_TIMEOUT, default=DEFAULT_ECHO_TIMEOUT): vol.All(
-            float, vol.Range(min=0.01, max=1.0)
-        ),
-        vol.Required(SZ_RPLY_TIMEOUT, default=DEFAULT_RPLY_TIMEOUT): vol.All(
-            float, vol.Range(min=0.01, max=1.0)
-        ),
-    },
-    extra=vol.PREVENT_EXTRA,
-)
-
-#
-# 1/5: Packet source configuration
-SZ_INPUT_FILE: Final = "input_file"
-SZ_PACKET_SOURCE: Final = "packet_source"
-
-
-#
-# 2/5: Packet log configuration
-SZ_FILE_NAME: Final = "file_name"
-SZ_PACKET_LOG: Final = "packet_log"
-SZ_ROTATE_BACKUPS: Final = "rotate_backups"
-SZ_ROTATE_BYTES: Final = "rotate_bytes"
-
-
-class PktLogConfigT(TypedDict):
-    file_name: str
-    rotate_backups: int
-    rotate_bytes: int | None
 
 
 def sch_packet_log_dict_factory(
@@ -133,19 +101,6 @@ SCH_PACKET_LOG = vol.Schema(
     sch_packet_log_dict_factory(default_backups=7), extra=vol.PREVENT_EXTRA
 )
 
-#
-# 3/5: Serial port configuration
-SZ_PORT_CONFIG: Final = "port_config"
-SZ_PORT_NAME: Final = "port_name"
-# SZ_SERIAL_PORT: Final = "serial_port" # defined in const.py
-
-SZ_BAUDRATE: Final = "baudrate"
-SZ_DSRDTR: Final = "dsrdtr"
-SZ_RTSCTS: Final = "rtscts"
-SZ_TIMEOUT: Final = "timeout"
-SZ_XONXOFF: Final = "xonxoff"
-
-
 SCH_SERIAL_PORT_CONFIG = vol.Schema(
     {
         vol.Optional(SZ_BAUDRATE, default=115200): vol.All(
@@ -158,14 +113,6 @@ SCH_SERIAL_PORT_CONFIG = vol.Schema(
     },
     extra=vol.PREVENT_EXTRA,
 )
-
-
-class PortConfigT(TypedDict):
-    baudrate: int  # 57600, 115200
-    dsrdtr: bool
-    rtscts: bool
-    timeout: int
-    xonxoff: bool
 
 
 def sch_serial_port_dict_factory() -> dict[vol.Required, vol.Any]:
@@ -224,15 +171,6 @@ def ConvertNullToDict() -> Callable[[_T | None], _T | dict[Never, Never]]:
 
     return convert_null_to_dict
 
-
-SZ_ALIAS: Final = "alias"
-# SZ_BOUND_TO: Final = "bound"  # defined in const.py
-SZ_CLASS: Final = "class"
-SZ_FAKED: Final = "faked"
-SZ_SCHEME: Final = "scheme"
-
-SZ_BLOCK_LIST: Final = "block_list"
-SZ_KNOWN_LIST: Final = "known_list"
 
 SCH_DEVICE_ID_ANY = vol.Match(DEVICE_ID_REGEX.ANY)
 SCH_DEVICE_ID_SEN = vol.Match(DEVICE_ID_REGEX.SEN)
@@ -389,42 +327,3 @@ def select_device_filter_mode(
         )
 
     return enforce_known_list
-
-
-#
-# 5/5: Gateway (engine) configuration
-
-SZ_DISABLE_SENDING: Final = "disable_sending"
-SZ_AUTOSTART: Final = "autostart"
-SZ_DISABLE_QOS: Final = "disable_qos"
-SZ_ENFORCE_KNOWN_LIST: Final[str] = f"enforce_{SZ_KNOWN_LIST}"
-# SZ_EVOFW_FLAG: Final = "evofw_flag"  # defined in const.py
-SZ_SQLITE_INDEX: Final = (
-    "sqlite_index"  # temporary 0.52.x SQLite dev config option in ramses_cc
-)
-SZ_LOG_ALL_MQTT: Final = "log_all_mqtt"
-SZ_USE_REGEX: Final = "use_regex"
-
-SCH_ENGINE_DICT = {
-    vol.Optional(SZ_DISABLE_SENDING, default=False): bool,
-    vol.Optional(SZ_AUTOSTART, default=False): bool,
-    vol.Optional(SZ_DISABLE_QOS, default=None): vol.Any(
-        None,  # None is selective QoS (e.g. QoS only for bindings, schedule, etc.)
-        bool,
-    ),  # in the long term, this default to be True (not None)
-    vol.Optional(SZ_ENFORCE_KNOWN_LIST, default=False): bool,
-    vol.Optional(SZ_EVOFW_FLAG): vol.Any(None, str),
-    # vol.Optional(SZ_PORT_CONFIG): SCH_SERIAL_PORT_CONFIG,
-    vol.Optional(
-        SZ_SQLITE_INDEX, default=False
-    ): bool,  # temporary 0.52.x dev config option
-    vol.Optional(
-        SZ_LOG_ALL_MQTT, default=False
-    ): bool,  # log all incoming MQTT traffic config option
-    vol.Optional(SZ_USE_REGEX): dict,  # vol.All(ConvertNullToDict(), dict),
-    vol.Optional(SZ_COMMS_PARAMS): SCH_COMMS_PARAMS,
-}
-SCH_ENGINE_CONFIG = vol.Schema(SCH_ENGINE_DICT, extra=vol.REMOVE_EXTRA)
-
-# SZ_INBOUND: Final = "inbound"  # for use_regex (intentionally obscured)  # defined in const.py
-# SZ_OUTBOUND: Final = "outbound"                                          # defined in const.py
