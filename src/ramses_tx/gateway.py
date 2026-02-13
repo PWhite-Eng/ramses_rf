@@ -105,8 +105,10 @@ class Engine:
         self._port_config: PortConfigT = self.config.port_config
         self._packet_log: PktLogConfigT = self.config.packet_log
 
-        self._exclude: DeviceListT = self.config.block_list
-        self._include: DeviceListT = self.config.known_list
+        # Ensure lists are iterables (dict) to prevent TypeError in check_filter_lists
+        self._exclude: DeviceListT = self.config.block_list or {}
+        self._include: DeviceListT = self.config.known_list or {}
+
         self._unwanted: list[DeviceIdT] = [
             NON_DEV_ADDR.id,
             ALL_DEV_ADDR.id,
@@ -165,10 +167,6 @@ class Engine:
             exclude_list=self._exclude,
             include_list=self._include,
         )
-
-    # ... rest of file (add_msg_handler, etc.)
-    # Be sure to include the rest of the file logic here as needed
-    # or ensure you paste into the existing file correctly.
 
     def add_msg_handler(
         self,

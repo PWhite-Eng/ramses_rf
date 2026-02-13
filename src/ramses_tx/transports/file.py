@@ -36,6 +36,8 @@ class _FileTransportAbstractor:
 class FileTransport(_ReadTransport, _FileTransportAbstractor):
     """Receive packets from a read-only source such as packet log or a dict."""
 
+    _count: int = 0
+
     def __init__(
         self,
         pkt_source: Any,
@@ -67,16 +69,23 @@ class FileTransport(_ReadTransport, _FileTransportAbstractor):
         self._reading = True
         self._evt_reading.set()
 
+        # Rename local variable to avoid shadowing 'exc' module import
+        run_exc: Exception | None = None
+
         try:
             await self._producer_loop()
+        except asyncio.CancelledError:
+            # If cancelled, we expect the closer to handle connection_lost
+            # But we must ensure it happens if we were cancelled not by close()
+            if not self._closing:
+                run_exc = exc.TransportError("Reader task was cancelled")
         except Exception as err:
-            self.loop.call_soon_threadsafe(
-                functools.partial(self._protocol.connection_lost, err)
-            )
-        else:
-            self.loop.call_soon_threadsafe(
-                functools.partial(self._protocol.connection_lost, None)
-            )
+            run_exc = err
+        finally:
+            if not self._closing:
+                self.loop.call_soon_threadsafe(
+                    functools.partial(self._protocol.connection_lost, run_exc)
+                )
 
     def pause_reading(self) -> None:
         self._reading = False
@@ -93,6 +102,7 @@ class FileTransport(_ReadTransport, _FileTransportAbstractor):
 
         elif isinstance(self._pkt_source, str):
             try:
+                # hook_compressed_text=True is not standard fileinput, assume default
                 with fileinput.input(files=self._pkt_source, encoding="utf-8") as file:
                     for dtm_pkt_line in file:
                         await self._process_line_from_raw(dtm_pkt_line)
@@ -113,9 +123,15 @@ class FileTransport(_ReadTransport, _FileTransportAbstractor):
             await self._process_line(line[:26], line[27:])
 
     async def _process_line(self, dtm_str: str, frame: str) -> None:
-        await self._evt_reading.wait()
+        if not self._reading:
+            await self._evt_reading.wait()
+
         self._frame_read(dtm_str, frame)
-        await asyncio.sleep(0)
+
+        # Batch yields to improve performance on large files
+        self._count += 1
+        if self._count % 25 == 0:
+            await asyncio.sleep(0)
 
     def _close(self, exc: exc.RamsesException | None = None) -> None:
         super()._close(exc)
