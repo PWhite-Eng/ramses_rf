@@ -95,12 +95,26 @@ async def load_test_gwy(dir_name: Path, **kwargs: Any) -> Gateway:
         config = {}
 
     if config:
+        # Filter out keys starting with '_' (e.g. _notes) to avoid schema errors
+        config = {k: v for k, v in config.items() if k[:1] != "_"}
         kwargs.update(config)
+
+    # Disable discovery/sending to prevent 'ProtocolSendFailed' noise during replay
+    kwargs.setdefault("config", {})
+    kwargs["config"]["disable_discovery"] = True
+    kwargs["config"]["disable_sending"] = True
 
     path = f"{dir_name}/packet.log"
     gwy = Gateway(None, input_file=path, **kwargs)
     gwy._sqlite_index = _sqlite_index  # TODO(eb): remove legacy Q2 2026
-    await gwy.start()
+
+    # FORCE overrides after init, because Gateway.__init__ resets them for input_file.
+    # We must ensure they are True before start() processes the log file so devices
+    # created during replay don't start their pollers.
+    gwy._disable_discovery = True
+    gwy._disable_sending = True
+
+    await gwy.start(start_discovery=False)
 
     # The Gateway with input_file uses a Transport that processes the file automatically.
     # We simply need to wait for the transport to finish reading the file.
