@@ -228,7 +228,7 @@ async def _test_flow_10x(
 
     #
     # Step S1: Supplicant sends an Offer (makes Offer) and expects an Accept
-    msg = Message(Packet(dt.now(), "000 " + pkt_flow_expected[_TENDER]))
+    msg = Message(Packet(dt.now(), pkt_flow_expected[_TENDER], rssi="000"))
     codes = [b[1] for b in msg.payload["bindings"] if b[1] != Code._1FC9]
 
     pkt = await supplicant._bind_context._make_offer(codes)
@@ -248,7 +248,7 @@ async def _test_flow_10x(
 
     #
     # Step R2: Respondent expects a Confirm after sending an Accept (accepts Offer)
-    msg = Message(Packet(dt.now(), "000 " + pkt_flow_expected[_ACCEPT]))
+    msg = Message(Packet(dt.now(), pkt_flow_expected[_ACCEPT], rssi="000"))
     codes = [b[1] for b in msg.payload["bindings"]]
 
     pkt = await respondent._bind_context._accept_offer(tender, codes)
@@ -265,7 +265,7 @@ async def _test_flow_10x(
 
     #
     # Step S2: Supplicant sends a Confirm (confirms Accept)
-    msg = Message(Packet(dt.now(), "000 " + pkt_flow_expected[_AFFIRM]))
+    msg = Message(Packet(dt.now(), pkt_flow_expected[_AFFIRM], rssi="000"))
     codes = [b[1] for b in msg.payload["bindings"] if len(b) > 1]
 
     pkt = await supplicant._bind_context._confirm_accept(accept, confirm_code=codes)
