@@ -331,14 +331,7 @@ class _ReadTransport(RamsesTransport):
         if not pkt_parts:
             return
 
-        # Handle '...' placeholder as a valid RSSI substitute
-        if pkt_parts[0] == "...":
-            rssi = "..."
-            pkt_parts.pop(0)
-            if not pkt_parts:
-                return
-
-        # Default RSSI if not found by regex or '...' check
+        # Default RSSI if not found by regex
         rssi = rssi or "---"
 
         # Ensure single letter verbs have leading space

@@ -148,6 +148,21 @@ class Packet(Frame):
     def from_file(cls, dtm: str, frame: str, rssi: str | None = None) -> Packet:
         """Create a packet from a log file line."""
         pkt_line, err_msg, comment = cls._partition(frame)
+
+        # Robustness: Strip common test/debug prefixes (e.g., '... ', '000 ')
+        # This mirrors logic in from_port
+        parts = pkt_line.split()
+        if parts and (
+            parts[0] in ("...", "---") or (parts[0].isdigit() and len(parts[0]) == 3)
+        ):
+            parts.pop(0)
+
+        # Robustness: Ensure single-letter verbs (I & W) have a leading space
+        if parts and len(parts[0]) == 1:
+            parts[0] = f" {parts[0]}"
+
+        pkt_line = " ".join(parts)
+
         if not pkt_line:
             raise ValueError(f"null frame: >>>{frame}<<<")
         return cls(
@@ -166,8 +181,28 @@ class Packet(Frame):
         raw_line: bytes | None = None,
         rssi: str | None = None,
     ) -> Packet:
-        """Create a packet from a USB port (HGI80, evofw3)."""
+        """Create a packet from a USB port (HGI80, evofw3).
+
+        Will strip common test/debug prefixes (e.g. '000', '...') to return a clean frame.
+        """
         frame, err_msg, comment = cls._partition(pkt_line)
+
+        # Robustness: Strip common test/debug prefixes (e.g., '... ', '000 ')
+        # This mirrors logic in transport/*.py but applied at the object factory
+        # level so direct instantiation (used in tests) works correctly.
+        parts = frame.split()
+        if parts and (
+            parts[0] in ("...", "---") or (parts[0].isdigit() and len(parts[0]) == 3)
+        ):
+            parts.pop(0)
+
+        # Robustness: Ensure single-letter verbs (I & W) have a leading space
+        # This is required by strict Frame validation
+        if parts and len(parts[0]) == 1:
+            parts[0] = f" {parts[0]}"
+
+        frame = " ".join(parts)
+
         if not frame:
             raise ValueError(f"null frame: >>>{frame}<<<")
         return cls(
