@@ -317,17 +317,16 @@ class _ReadTransport(RamsesTransport):
             pkt = match.group("pkt")
         else:
             # Fallback (rare) if regex fails but strip passed
-            rssi = None
+            rssi = "---"
             pkt = frame
 
+        # NORMALIZATION: Split to remove extra spaces, fix verb alignment
+        pkt_parts = pkt.split()
         # NORMALIZATION: Split to remove extra spaces, fix verb alignment
         pkt_parts = pkt.split()
 
         if not pkt_parts:
             return
-
-        # Default RSSI if not found by regex
-        rssi = rssi or "---"
 
         # Ensure single letter verbs have leading space
         if len(pkt_parts[0]) == 1:
@@ -335,7 +334,12 @@ class _ReadTransport(RamsesTransport):
 
         # Reconstruct normalized packet string
         pkt = " ".join(pkt_parts)
+        # Reconstruct normalized packet string
+        pkt = " ".join(pkt_parts)
 
+        try:
+            # Instantiate explicitly passing the separated RSSI
+            pkt_obj = Packet.from_file(dtm_str, pkt, rssi=rssi)
         try:
             # Instantiate explicitly passing the separated RSSI
             pkt_obj = Packet.from_file(dtm_str, pkt, rssi=rssi)
@@ -346,6 +350,7 @@ class _ReadTransport(RamsesTransport):
             _LOGGER.warning("%s < PacketInvalid(%s)", frame, err)
             return
 
+        self._pkt_read(pkt_obj)
         self._pkt_read(pkt_obj)
 
     def _pkt_read(self, pkt: Packet) -> None:

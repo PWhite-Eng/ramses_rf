@@ -71,7 +71,9 @@ class Frame:
 
         self._frame: str = frame
         if not COMMAND_REGEX.match(self._frame):
-            raise exc.PacketInvalid(f"Bad frame: Invalid structure: >>>{frame}<<<")
+            # Relax check for empty payloads (len=000)
+            if not self._frame.strip().endswith(" 000"):
+                raise exc.PacketInvalid(f"Bad frame: Invalid structure: >>>{frame}<<<")
 
         fields = frame.lstrip().split(" ")
 
@@ -82,6 +84,13 @@ class Frame:
         self.seqn: str = fields[1]  # . frame[3:6]
         self.code: Code = fields[5]  # type: ignore[assignment]
         self.len_: str = fields[6]  # . frame[42:45]  FIXME: len_, _len & len(payload)/2
+
+        # Safely extract payload (handle missing field for empty payloads)
+        if len(fields) > 7:
+            self.payload: PayloadT = fields[7]  # frame[46:].split(" ")[0]
+        else:
+            self.payload = ""
+
 
         # Safely extract payload (handle missing field for empty payloads)
         if len(fields) > 7:
@@ -122,6 +131,14 @@ class Frame:
 
         Raise an exception InvalidPacketError (InvalidAddrSetError) if it is not valid.
         """
+
+        # Check payload length against length field
+        # Use split because payload might be empty or followed by comment
+        # Note: frame[46:] assumption is risky if frame is not strictly formatted,
+        # but kept for legacy consistency (though decoupled payload logic above is better).
+        # We'll use the already parsed attributes for safety.
+        if len(self.payload) != int(self.len_) * 2:
+            raise exc.PacketInvalid("Bad frame: Payload length mismatch")
 
         try:
             # self.src, self.dst, *self._addrs = pkt_addrs(self._frame[7:36])
@@ -510,6 +527,7 @@ def _pkt_idx(pkt: Frame) -> None | bool | str:  # _has_array, _has_ctl
     if pkt.payload[:2] in (F8, F9, FA, FC):  # TODO: F6, F7?, FB, FD
         if pkt.code not in CODE_IDX_DOMAIN:
             raise exc.PacketPayloadInvalid(
+                f"Packet idx is {pkt.payload[:2]}, but expecting a domain id"
                 f"Packet idx is {pkt.payload[:2]}, but expecting a domain id"
             )
         return pkt.payload[:2]

@@ -49,19 +49,24 @@ class Packet(Frame):
     def __init__(
         self, dtm: dt, frame: str, rssi: str | None = None, **kwargs: Any
     ) -> None:
+    def __init__(
+        self, dtm: dt, frame: str, rssi: str | None = None, **kwargs: Any
+    ) -> None:
         """Create a packet from a raw frame string.
 
         :param dtm: The timestamp when the packet was received
+        :param frame: The raw frame string (excluding RSSI)
+        :param rssi: The RSSI value (e.g. "063"), defaults to "---"
         :param frame: The raw frame string (excluding RSSI)
         :param rssi: The RSSI value (e.g. "063"), defaults to "---"
         :param kwargs: Metadata including 'comment', 'err_msg', or 'raw_frame'
         :raises PacketInvalid: If the frame content is malformed.
         """
         super().__init__(frame)
+        super().__init__(frame)
 
         self._dtm: dt = dtm
         self._rssi: str = rssi or "---"
-
         self.comment: str = kwargs.get("comment", "")
         self.error_text: str = kwargs.get("err_msg", "")
         self.raw_frame: str = kwargs.get("raw_frame", "")
@@ -112,6 +117,7 @@ class Packet(Frame):
         except AttributeError:
             dtm = dt.min.isoformat(timespec="microseconds")
         return f"{dtm} {self._rssi} {self}{hdr}"
+        return f"{dtm} {self._rssi} {self}{hdr}"
 
     def __str__(self) -> str:
         """Return a brief readable string representation of this object aka 'header'."""
@@ -152,25 +158,18 @@ class Packet(Frame):
 
     @classmethod
     def from_file(cls, dtm: str, frame: str, rssi: str | None = None) -> Packet:
+    def from_file(cls, dtm: str, frame: str, rssi: str | None = None) -> Packet:
         """Create a packet from a log file line."""
         pkt_line, err_msg, comment = cls._partition(frame)
-
-        # Robustness: Strip common test/debug prefixes (e.g., '... ', '000 ')
-        # This mirrors logic in from_port
-        parts = pkt_line.split()
-        if parts and (
-            parts[0] in ("...", "---") or (parts[0].isdigit() and len(parts[0]) == 3)
-        ):
-            parts.pop(0)
-
-        # Robustness: Ensure single-letter verbs (I & W) have a leading space
-        if parts and len(parts[0]) == 1:
-            parts[0] = f" {parts[0]}"
-
-        pkt_line = " ".join(parts)
-
         if not pkt_line:
             raise ValueError(f"null frame: >>>{frame}<<<")
+        return cls(
+            dt.fromisoformat(dtm),
+            pkt_line,
+            rssi=rssi,
+            err_msg=err_msg,
+            comment=comment,
+        )
         return cls(
             dt.fromisoformat(dtm),
             pkt_line,
@@ -187,10 +186,7 @@ class Packet(Frame):
         raw_line: bytes | None = None,
         rssi: str | None = None,
     ) -> Packet:
-        """Create a packet from a USB port (HGI80, evofw3).
-
-        Will strip common test/debug prefixes (e.g. '000', '...') to return a clean frame.
-        """
+        """Create a packet from a USB port (HGI80, evofw3)."""
         frame, err_msg, comment = cls._partition(pkt_line)
 
         # Robustness: Strip common test/debug prefixes (e.g., '... ', '000 ')
@@ -211,6 +207,14 @@ class Packet(Frame):
 
         if not frame:
             raise ValueError(f"null frame: >>>{frame}<<<")
+        return cls(
+            dtm,
+            frame,
+            rssi=rssi,
+            err_msg=err_msg,
+            comment=comment,
+            raw_frame=raw_line,
+        )
         return cls(
             dtm,
             frame,
