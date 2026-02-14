@@ -3,7 +3,6 @@
 
 import unittest.mock
 from types import SimpleNamespace
-from typing import TypeVar
 
 import pytest
 
@@ -17,9 +16,6 @@ from ramses_rf.device.hvac import (  # initiate_binding_process
 )
 from ramses_tx.address import Address
 from ramses_tx.const import Code
-
-_FakeableDeviceT = TypeVar("_FakeableDeviceT", bound=Fakeable)
-
 
 # ### TEST SUITE ######################################################################
 ADDR_CLASS_LOOKUP: dict[str, type[Fakeable]] = {
@@ -41,13 +37,18 @@ CLASS_CODES_MAP: dict[type[Fakeable], Code | tuple[Code, ...]] = {
 
 
 class GatewayStub:
-    config = SimpleNamespace(**{"disable_discovery": True})
+    """A stub for the Gateway class."""
 
-    device_by_id: dict[str, Fakeable] = {}
-    devices: list[Fakeable] = []
+    def __init__(self) -> None:
+        self.config = SimpleNamespace(disable_discovery=True)
+        self._disable_discovery = True
 
-    _include: dict[str] = {}
-    msg_db = MessageIndex(maintain=False)
+        self.device_by_id: dict[str, Fakeable] = {}
+        self.devices: list[Fakeable] = []
+
+        self._include: dict[str, dict] = {}
+        self._exclude: dict[str, dict] = {}
+        self.msg_db = MessageIndex(maintain=False)
 
     def _add_device(self, dev: Fakeable) -> None:
         self.device_by_id[dev.id] = dev
@@ -78,7 +79,7 @@ async def test_initiate_binding_process(dev_class: type[Fakeable]) -> None:
     ) as mocked_method:
         gwy._include[dev_addr.id] = {}  # this shouldn't be needed? a BUG?
 
-        dev = dev_class(gwy, dev_addr)
+        dev = dev_class(gwy, dev_addr)  # type: ignore[arg-type]
         dev._make_fake()
 
         _ = await dev.initiate_binding_process()
