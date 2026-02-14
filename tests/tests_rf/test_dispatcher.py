@@ -4,6 +4,7 @@
 import logging
 from collections.abc import Generator
 from datetime import datetime as dt, timedelta as td
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,16 +23,24 @@ def mock_gateway() -> Generator[MagicMock, None, None]:
     gateway.dispatcher = MagicMock()
     gateway.dispatcher.send = MagicMock()
 
-    # Add required attributes
-    gateway.config = MagicMock()
-    gateway.config.disable_discovery = False
-    gateway.config.enable_eavesdrop = False
-    gateway.config.reduce_processing = 0  # Ensure processing continues by default
+    # Add required attributes with SimpleNamespace to behave like real config
+    # This ensures attribute access returns values, not new Mocks
+    gateway.config = SimpleNamespace(
+        disable_discovery=False,
+        enable_eavesdrop=False,
+        reduce_processing=0,
+        enforce_strict_handling=False,  # Default to False (Safe Mode)
+    )
+
+    # Internal flags required by Entity initialization
+    gateway._disable_discovery = False
+
     gateway._loop = MagicMock()
     gateway._loop.call_soon = MagicMock()
     gateway._loop.call_later = MagicMock()
     gateway._loop.time = MagicMock(return_value=0.0)
     gateway._include = {}
+    gateway._exclude = {}
     # activate the SQLite MessageIndex
     gateway.msg_db = MessageIndex(maintain=False)
 
