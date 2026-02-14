@@ -118,7 +118,7 @@ class TestDispatcherErrorHandling:
     def test_process_msg_strict_mode(self, mock_gateway: MagicMock) -> None:
         """Test process_msg raises exception in strict mode."""
         # Enable strict mode
-        mock_gateway.config.enforce_strict_handling = True
+        mock_gateway._enforce_strict_handling = True
 
         # Create a message with a valid payload for code 0001
         msg = Message._from_pkt(
@@ -143,7 +143,7 @@ class TestDispatcherErrorHandling:
     ) -> None:
         """Test process_msg logs warning with trace in safe mode."""
         # Disable strict mode (safe mode)
-        mock_gateway.config.enforce_strict_handling = False
+        mock_gateway._enforce_strict_handling = False
 
         msg = Message._from_pkt(
             Packet(
