@@ -35,6 +35,8 @@ def mock_gateway() -> Generator[MagicMock, None, None]:
     gateway.config = MagicMock()
     gateway.config.disable_discovery = False
     gateway.config.enable_eavesdrop = False
+    gateway._disable_discovery = False
+    gateway._enable_eavesdrop = False
     gateway._loop = MagicMock()
     gateway._loop.call_soon = MagicMock()
     gateway._loop.call_later = MagicMock()
