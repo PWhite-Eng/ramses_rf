@@ -301,6 +301,7 @@ class Gateway(Engine):
             not self._disable_sending
             and not self._disable_discovery
             and start_discovery
+            and not self._input_file  # Suppress active discovery for file replays
         ):
             initiate_discovery(self.devices, self.systems)
 
