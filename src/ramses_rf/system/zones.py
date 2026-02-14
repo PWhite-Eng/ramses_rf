@@ -674,7 +674,7 @@ class Zone(ZoneSchedule):
             #     self._send_cmd(cmd)
 
         # If zone still doesn't have a zone class, maybe eavesdrop?
-        if self._gwy.config.enable_eavesdrop and self._SLUG in (
+        if self._gwy._enable_eavesdrop and self._SLUG in (
             None,
             ZoneRole.ELE,
         ):
@@ -1041,7 +1041,7 @@ def zone_factory(
         tcs.ctl.addr,
         idx,
         msg=msg,
-        eavesdrop=tcs._gwy.config.enable_eavesdrop,
+        eavesdrop=tcs._gwy._enable_eavesdrop,
         **schema,
     ).create_from_schema(tcs, idx, **schema)
 

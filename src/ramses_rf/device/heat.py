@@ -141,7 +141,7 @@ class Actuator(DeviceHeat):  # 3EF0, 3EF1 (for 10:/13:)
         if isinstance(self, OtbGateway):
             return
 
-        if self._gwy.config.disable_discovery:
+        if self._gwy._disable_discovery:
             return
 
         # TODO: why are we doing this here? Should simply use discovery poller!
@@ -614,7 +614,7 @@ class DhwSensor(DhwTemperature, BatteryState, Fakeable):  # DHW (07): 10A0, 1260
     def _handle_msg(self, msg: Message) -> None:  # NOTE: active
         super()._handle_msg(msg)
 
-        if self._gwy.config.disable_discovery:
+        if self._gwy._disable_discovery:
             return
 
         # TODO: why are we doing this here? Should simply use dscovery poller!
@@ -704,7 +704,7 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
 
     def _setup_discovery_cmds(self) -> None:
         # TEMP: cast to str to suppress Mypy bool vs str errors
-        use_native_ot = cast(str, self._gwy.config.use_native_ot)
+        use_native_ot = cast(str, self._gwy._use_native_ot)
 
         def which_cmd(use_native_ot: str, msg_id: MsgId) -> Command | None:
             """Create a OT cmd, or its RAMSES equivalent, depending."""
@@ -851,7 +851,7 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
     ) -> Any | None:
         """Return a value using OpenTherm or RAMSES as per `config.use_native_ot`."""
         # TEMP: cast to str to suppress Mypy bool vs str errors
-        use_native_ot = cast(str, self._gwy.config.use_native_ot)
+        use_native_ot = cast(str, self._gwy._use_native_ot)
 
         if use_native_ot == "always":
             return cbk_ot() if cbk_ot else None
@@ -874,7 +874,7 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
         """Return a value using OpenTherm or RAMSES as per `config.use_native_ot`."""
         # assert code in self.RAMSES_TO_OT and kwargs.get("key"):
         # TEMP: cast to str to suppress Mypy bool vs str errors
-        use_native_ot = cast(str, self._gwy.config.use_native_ot)
+        use_native_ot = cast(str, self._gwy._use_native_ot)
 
         if use_native_ot == "always":
             return self._ot_msg_value(self.RAMSES_TO_OT[code])
@@ -894,7 +894,7 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
     ) -> Any | None:
         """Return a value using OpenTherm or RAMSES as per `config.use_native_ot`."""
         # TEMP: cast to str to suppress Mypy bool vs str errors
-        use_native_ot = cast(str, self._gwy.config.use_native_ot)
+        use_native_ot = cast(str, self._gwy._use_native_ot)
 
         if use_native_ot == "always":
             return result_ot
@@ -1001,7 +1001,7 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
     def max_rel_modulation(self) -> float | None:  # 3220|0E, or 3EF0 (byte 8)
         # TEMP: cast to str to suppress Mypy bool vs str errors
         if (
-            cast(str, self._gwy.config.use_native_ot) == "prefer"
+            cast(str, self._gwy._use_native_ot) == "prefer"
         ):  # HACK: there'll always be 3EF0
             return cast(
                 float | None, self._msg_value(Code._3EF0, key=SZ_MAX_REL_MODULATION)
@@ -1028,7 +1028,7 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
     def rel_modulation_level(self) -> float | None:  # 3220|11, or 3EF0/3EF1
         # TEMP: cast to str to suppress Mypy bool vs str errors
         if (
-            cast(str, self._gwy.config.use_native_ot) == "prefer"
+            cast(str, self._gwy._use_native_ot) == "prefer"
         ):  # HACK: there'll always be 3EF0
             return cast(
                 float | None,
@@ -1046,7 +1046,7 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
     def ch_active(self) -> bool | None:  # 3220|00, or 3EF0 (byte 3)
         # TEMP: cast to str to suppress Mypy bool vs str errors
         if (
-            cast(str, self._gwy.config.use_native_ot) == "prefer"
+            cast(str, self._gwy._use_native_ot) == "prefer"
         ):  # HACK: there'll always be 3EF0
             return cast(bool | None, self._msg_value(Code._3EF0, key=SZ_CH_ACTIVE))
         return cast(
@@ -1061,7 +1061,7 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
     def ch_enabled(self) -> bool | None:  # 3220|00, or 3EF0 (byte 6)
         # TEMP: cast to str to suppress Mypy bool vs str errors
         if (
-            cast(str, self._gwy.config.use_native_ot) == "prefer"
+            cast(str, self._gwy._use_native_ot) == "prefer"
         ):  # HACK: there'll always be 3EF0
             return cast(bool | None, self._msg_value(Code._3EF0, key=SZ_CH_ENABLED))
         return cast(
@@ -1089,7 +1089,7 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
     def dhw_active(self) -> bool | None:  # 3220|00, or 3EF0 (byte 3)
         # TEMP: cast to str to suppress Mypy bool vs str errors
         if (
-            cast(str, self._gwy.config.use_native_ot) == "prefer"
+            cast(str, self._gwy._use_native_ot) == "prefer"
         ):  # HACK: there'll always be 3EF0
             return cast(bool | None, self._msg_value(Code._3EF0, key=SZ_DHW_ACTIVE))
         return cast(
@@ -1122,7 +1122,7 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
     def flame_active(self) -> bool | None:  # 3220|00, or 3EF0 (byte 3)
         # TEMP: cast to str to suppress Mypy bool vs str errors
         if (
-            cast(str, self._gwy.config.use_native_ot) == "prefer"
+            cast(str, self._gwy._use_native_ot) == "prefer"
         ):  # HACK: there'll always be 3EF0
             return cast(bool | None, self._msg_value(Code._3EF0, key="flame_on"))
         return cast(

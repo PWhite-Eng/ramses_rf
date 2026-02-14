@@ -882,7 +882,7 @@ class _Discovery(_MessageDB):
         self._supported_cmds: dict[str, bool | None] = {}
         self._supported_cmds_ctx: dict[str, bool | None] = {}
 
-        if not gwy.config.disable_discovery:
+        if not gwy._disable_discovery:
             # self._start_discovery_poller()  # Can't use derived classes don't exist yet
             gwy._loop.call_soon(self._start_discovery_poller)
 
@@ -1411,7 +1411,7 @@ class Child(Entity):  # A Zone, Device or a UfhCircuit
 
         super()._handle_msg(msg)
 
-        if not self._gwy.config.enable_eavesdrop or (
+        if not self._gwy._enable_eavesdrop or (
             msg.src is msg.dst or not isinstance(msg.dst, Controller)  # UfhController))
         ):
             return

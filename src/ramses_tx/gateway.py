@@ -69,7 +69,7 @@ class Engine:
         *,
         # Explicit Engine Configuration
         disable_sending: bool = False,
-        disable_qos: bool = DEFAULT_DISABLE_QOS,
+        disable_qos: bool | None = DEFAULT_DISABLE_QOS,
         enforce_known_list: bool = False,
         block_list: DeviceListT | None = None,
         known_list: DeviceListT | None = None,
@@ -78,6 +78,7 @@ class Engine:
         hgi_id: str | None = None,
         sqlite_index: bool = False,
         log_all_mqtt: bool = False,
+        use_native_ot: bool = False,
         loop: asyncio.AbstractEventLoop | None = None,
         config: dict[str, Any] | None = None,
         # Capture all remaining args for the Transport
@@ -98,6 +99,7 @@ class Engine:
             hgi_id: Explicit ID for the HGI device.
             sqlite_index: (Future) Use SQLite indexing.
             log_all_mqtt: Log all MQTT messages.
+            use_native_ot: ?
             loop: Asyncio loop.
             config: Legacy config dict (deprecated: unpack at call site).
             **transport_kwargs: Arguments passed directly to the transport factory.
@@ -110,8 +112,33 @@ class Engine:
         if config:
             # We strictly prioritize explicit args over the config dict
             # (which is standard python behavior when unpacking)
+            disable_sending = config.get("disable_sending", disable_sending)
+            disable_qos = config.get("disable_qos", disable_qos)
+
+            # Filter config to only include unknown keys for transport_kwargs
+            exclude_keys = {
+                "port_name",
+                "input_file",
+                "disable_sending",
+                "disable_qos",
+                "enforce_known_list",
+                "block_list",
+                "known_list",
+                "packet_log",
+                "port_config",
+                "hgi_id",
+                "sqlite_index",
+                "log_all_mqtt",
+                "use_native_ot",
+                "loop",
+                "config",
+            }
             transport_kwargs.update(
-                {k: v for k, v in config.items() if k not in transport_kwargs}
+                {
+                    k: v
+                    for k, v in config.items()
+                    if k not in transport_kwargs and k not in exclude_keys
+                }
             )
 
         # 2. Validation
@@ -131,8 +158,9 @@ class Engine:
         self._loop = loop or asyncio.get_running_loop()
         self._disable_sending = disable_sending
         self._disable_qos = disable_qos
-        self._port_config = port_config or {}
-        self._packet_log = packet_log or {}
+        self._port_config: PortConfigT = port_config or {}
+        self._packet_log: PktLogConfigT = packet_log or {}
+        self._use_native_ot = use_native_ot
 
         # Ensure lists are iterables (dict) to prevent TypeError
         self._exclude = block_list or {}
@@ -244,9 +272,14 @@ class Engine:
         # to transport_kwargs if the transport layer expects them.
         transport_kwargs = self._transport_kwargs.copy()
 
+        # Ensure we don't pass arguments twice (once explicitly, once in kwargs)
+        for k in ("disable_sending", "loop", "log_all"):
+            transport_kwargs.pop(k, None)
+
         # Assuming the transport might check these flags:
         transport_kwargs["disable_qos"] = self._disable_qos
         transport_kwargs["enforce_known_list"] = self._enforce_known_list
+        transport_kwargs["use_native_ot"] = self._use_native_ot
 
         self._transport = await transport_factory(
             self._protocol,

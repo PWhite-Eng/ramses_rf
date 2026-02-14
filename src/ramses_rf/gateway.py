@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from logging.handlers import QueueListener
 from typing import TYPE_CHECKING, Any
 
 from ramses_rf.exceptions import SystemSchemaInconsistent  # Absolute import
@@ -46,6 +47,7 @@ from .database import MessageIndex
 from .device import DeviceHeat, DeviceHvac, Fakeable, HgiGateway, device_factory
 from .dispatcher import detect_array_fragment, process_msg
 from .schemas import (
+    DEFAULT_MAX_ZONES,
     SCH_GLOBAL_SCHEMAS,
     SCH_TRAITS,
     SZ_ALIAS,
@@ -54,6 +56,7 @@ from .schemas import (
     SZ_ENABLE_EAVESDROP,
     SZ_FAKED,
     SZ_MAIN_TCS,
+    SZ_MAX_ZONES,
     SZ_ORPHANS,
     load_schema,
 )
@@ -93,9 +96,11 @@ class Gateway(Engine):
         disable_discovery: bool = False,
         enable_eavesdrop: bool = False,
         reduce_processing: int = 0,
+        max_zones: int = DEFAULT_MAX_ZONES,
+        use_native_ot: bool = False,
         # Engine Configuration
         disable_sending: bool = False,
-        disable_qos: bool = DEFAULT_DISABLE_QOS,
+        disable_qos: bool | None = DEFAULT_DISABLE_QOS,
         enforce_known_list: bool = False,
         block_list: DeviceListT | None = None,
         known_list: DeviceListT | None = None,
@@ -141,17 +146,19 @@ class Gateway(Engine):
 
         if config:
             # We strictly prioritize explicit args over the config dict.
-            # However, if explicit args are default (False/0), we allow config to override.
-            # Since we cannot easily detect "user passed default", we rely on the logic
-            # that config dicts are legacy and users should migrate to explicit args.
             disable_discovery = config.get("disable_discovery", disable_discovery)
             enable_eavesdrop = config.get(SZ_ENABLE_EAVESDROP, enable_eavesdrop)
             reduce_processing = config.get("reduce_processing", reduce_processing)
+            max_zones = config.get(SZ_MAX_ZONES, max_zones)
+            use_native_ot = config.get("use_native_ot", use_native_ot)
+            disable_sending = config.get("disable_sending", disable_sending)
 
         # 2. Store Gateway Configuration
         self._disable_discovery = disable_discovery
         self._enable_eavesdrop = enable_eavesdrop
         self._reduce_processing = reduce_processing
+        self._max_zones = max_zones
+        self._use_native_ot = use_native_ot
 
         # 3. Apply Discovery Logic Adjustments
         # These override user settings based on operating mode
@@ -161,6 +168,10 @@ class Gateway(Engine):
         elif disable_sending:
             # If sending is disabled and not replaying, disable discovery
             self._disable_discovery = True
+
+        # Pass transport_constructor to Engine via kwargs if provided
+        if transport_constructor:
+            transport_kwargs["transport_constructor"] = transport_constructor
 
         # 4. Initialize Engine
         super().__init__(
@@ -724,7 +735,7 @@ class Gateway(Engine):
         that was loaded during initialisation.
 
         Orphans are devices that 'exist' but don't yet have a place in the schema
-        hierarchy (if ever): therefore, they are instantiated when the schema is loaded,
+        hierarchy (if ever): therefore, they are instantiated when a schema is loaded,
         just like the other devices in the schema.
 
         :returns: A dictionary representing the entire system schema structure.

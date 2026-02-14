@@ -88,7 +88,7 @@ def _create_devices_from_addrs(gwy: Gateway, this: Message) -> None:
             this.dst = this.src
             return
 
-    if not gwy.config.enable_eavesdrop:
+    if not gwy._enable_eavesdrop:
         return
 
     if not isinstance(this.dst, Device) and this.src != gwy.hgi:  # type: ignore[unreachable]
@@ -214,7 +214,7 @@ def process_msg(gwy: Gateway, msg: Message) -> None:
             # Continue: Invalid address sets are often just garbage, but we let them pass
             # for logging purposes or in case validation is too strict.
 
-        if gwy.config.reduce_processing >= DONT_CREATE_ENTITIES:
+        if gwy._reduce_processing >= DONT_CREATE_ENTITIES:
             logger_xxxx(msg)
             return
 
@@ -247,7 +247,7 @@ def process_msg(gwy: Gateway, msg: Message) -> None:
                 "%s < %s(%s)", msg._pkt, err.__class__.__name__, err
             )
 
-        if gwy.config.reduce_processing >= DONT_UPDATE_ENTITIES:
+        if gwy._reduce_processing >= DONT_UPDATE_ENTITIES:
             logger_xxxx(msg)
             return
 
@@ -290,7 +290,7 @@ def process_msg(gwy: Gateway, msg: Message) -> None:
         )
 
     except (AttributeError, LookupError, TypeError, ValueError) as err:
-        if getattr(gwy.config, "enforce_strict_handling", False):
+        if getattr(gwy, "_enforce_strict_handling", False):
             raise
         _LOGGER.warning(
             "%s < %s(%s)", msg._pkt, err.__class__.__name__, err, exc_info=True

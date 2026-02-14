@@ -30,7 +30,7 @@ DeviceListT: TypeAlias = dict[DeviceIdT, DeviceTraitsT]
 RamsesTransportT = TypeVar("RamsesTransportT", bound="RamsesTransport")
 
 
-class PortConfigT(TypedDict):
+class PortConfigT(TypedDict, total=False):
     """
     Type definition for serial port configuration.
 
@@ -48,7 +48,7 @@ class PortConfigT(TypedDict):
     xonxoff: bool
 
 
-class PktLogConfigT(TypedDict):
+class PktLogConfigT(TypedDict, total=False):
     """
     Type definition for packet logging configuration.
 

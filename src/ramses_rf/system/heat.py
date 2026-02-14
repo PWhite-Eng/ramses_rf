@@ -138,6 +138,7 @@ class SystemBase(Parent, Entity):  # 3B00 (multi-relay)
 
         self._app_cntrl: BdrSwitch | OtbGateway | None = None
         self._heat_demand: dict[str, Any] | None = None
+        self._max_zones: int = getattr(self._gwy, "_max_zones", DEFAULT_MAX_ZONES)
 
     def __repr__(self) -> str:
         return f"{self.ctl.id} ({self._SLUG})"
@@ -245,7 +246,7 @@ class SystemBase(Parent, Entity):  # 3B00 (multi-relay)
                     f"{msg!r} < Unexpected payload type for {msg.code}: {type(msg.payload)} (expected list/dict)"
                 )
 
-        if self._gwy.config.enable_eavesdrop and not self.appliance_control:
+        if self._gwy._enable_eavesdrop and not self.appliance_control:
             eavesdrop_appliance_control(msg)
 
     @property
@@ -361,9 +362,7 @@ class MultiZone(SystemBase):  # 0005 (+/- 000C?)
 
         self.zones: list[Zone] = []
         self.zone_by_idx: dict[str, Zone] = {}  # should not include HW
-        self._max_zones: int = getattr(
-            self._gwy.config, SZ_MAX_ZONES, DEFAULT_MAX_ZONES
-        )
+        self._max_zones: int = getattr(self._gwy, SZ_MAX_ZONES, DEFAULT_MAX_ZONES)
 
         self._prev_30c9: Message | None = None  # used to eavesdrop zone sensors
 
@@ -515,7 +514,7 @@ class MultiZone(SystemBase):  # 0005 (+/- 000C?)
                     z._get_temp()
 
         # If some zones still don't have a sensor, maybe eavesdrop?
-        if self._gwy.config.enable_eavesdrop and (
+        if self._gwy._enable_eavesdrop and (
             msg.code in (Code._000A, Code._2309, Code._30C9) and msg._has_array
         ):  # could do Code._000A, but only 1/hr
             eavesdrop_zones(msg)
@@ -534,7 +533,7 @@ class MultiZone(SystemBase):  # 0005 (+/- 000C?)
 
         # If some zones still don't have a sensor, maybe eavesdrop?
         if (  # TODO: edge case: 1 zone with CTL as SEN
-            self._gwy.config.enable_eavesdrop
+            self._gwy._enable_eavesdrop
             and msg.code == Code._30C9
             and (msg._has_array or len(self.zones) == 1)
             and any(z for z in self.zones if not z.sensor)
@@ -1166,6 +1165,6 @@ def system_factory(
     return best_tcs_class(
         ctl.addr,
         msg=msg,
-        eavesdrop=ctl._gwy.config.enable_eavesdrop,
+        eavesdrop=ctl._gwy._enable_eavesdrop,
         **schema,
     ).create_from_schema(ctl, **schema)

@@ -145,7 +145,7 @@ class DeviceBase(Entity):
             from . import best_dev_role
 
             cls = best_dev_role(
-                self.addr, msg=msg, eavesdrop=self._gwy.config.enable_eavesdrop
+                self.addr, msg=msg, eavesdrop=self._gwy._enable_eavesdrop
             )
 
             if cls._SLUG in (DevType.DEV, self._SLUG):

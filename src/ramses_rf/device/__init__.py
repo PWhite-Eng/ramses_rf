@@ -166,7 +166,7 @@ def device_factory(
     cls: type[Device] = best_dev_role(
         dev_addr,
         msg=msg,
-        eavesdrop=gwy.config.enable_eavesdrop,
+        eavesdrop=gwy._enable_eavesdrop,
         **traits,
     )
 
