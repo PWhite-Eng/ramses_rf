@@ -69,12 +69,24 @@ class Frame:
         """
 
         self._frame: str = frame
+        fields = frame.lstrip().split(" ")
+
         if not COMMAND_REGEX.match(self._frame):
             # Relax check for empty payloads (len=000)
-            if not self._frame.strip().endswith(" 000"):
-                raise exc.PacketInvalid(f"Bad frame: invalid structure: >>>{frame}<<<")
+            # Strict check: Must have exactly 7 fields (or 8 if trailing space) and length field must be "000"
+            # This prevents invalid packets (e.g. wrong length) from bypassing the structure check
+            # fields: [Verb, Seqn, Src, Dst, Addrs, Code, Len] -> len=7
+            # fields: [Verb, Seqn, Src, Dst, Addrs, Code, Len, ""] -> len=8 (trailing space)
 
-        fields = frame.lstrip().split(" ")
+            is_valid_empty = False
+            if len(fields) >= 7 and fields[6] == "000":
+                if len(fields) == 7:
+                    is_valid_empty = True
+                elif len(fields) == 8 and fields[7] == "":
+                    is_valid_empty = True
+
+            if not is_valid_empty:
+                raise exc.PacketInvalid(f"Bad frame: invalid structure: >>>{frame}<<<")
 
         self.verb: VerbT = frame[:2]  # type: ignore[assignment]
         self.seqn: str = fields[1]  # . frame[3:6]
