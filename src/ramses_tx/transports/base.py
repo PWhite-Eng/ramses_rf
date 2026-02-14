@@ -315,14 +315,14 @@ class _ReadTransport(RamsesTransport):
         if not (frame := frame.strip()):
             return
 
-        # Refactor Fix: Use regex to extract RSSI and Packet
+        # Use regex to extract RSSI and Packet
         match = PKT_LINE_REGEX.match(frame)
         if match:
-            rssi = match.group("rssi") or "---"
+            rssi = match.group("rssi")
             pkt = match.group("pkt")
         else:
             # Fallback (rare) if regex fails but strip passed
-            rssi = "---"
+            rssi = None
             pkt = frame
 
         # NORMALIZATION: Split to remove extra spaces, fix verb alignment
@@ -330,6 +330,16 @@ class _ReadTransport(RamsesTransport):
 
         if not pkt_parts:
             return
+
+        # Handle '...' placeholder as a valid RSSI substitute
+        if pkt_parts[0] == "...":
+            rssi = "..."
+            pkt_parts.pop(0)
+            if not pkt_parts:
+                return
+
+        # Default RSSI if not found by regex or '...' check
+        rssi = rssi or "---"
 
         # Ensure single letter verbs have leading space
         if len(pkt_parts[0]) == 1:
