@@ -48,21 +48,22 @@ class Test_entity_base:
     msg5: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=40),
-            "...  I --- 04:189078 --:------ 01:145038 3150 002 0100",  # heat_demand
+            " I --- 04:189078 --:------ 01:145038 3150 002 0100",  # heat_demand
         )
     )
 
     msg6: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=50),
-            "061 RP --- 01:145038 04:189078 --:------ 3220 005 00C0110000",  # OTB
+            "RP --- 01:145038 04:189078 --:------ 3220 005 00C0110000",  # OTB
+            rssi="061",
         )
     )
 
     msg7: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=60),
-            "...  I --- 04:189078 --:------ 01:145038 12B0 003 010000",  # window_open
+            " I --- 04:189078 --:------ 01:145038 12B0 003 010000",  # window_open
         )
     )
 
@@ -171,13 +172,15 @@ class Test_entity_base:
     msg8: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=70),
-            "045  I --- 01:145038 --:------ 01:145038 3150 002 FC90",  # heat_demand
+            " I --- 01:145038 --:------ 01:145038 3150 002 FC90",  # heat_demand
+            rssi="045",
         )
     )
     msg9: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=80),
-            "045 RP --- 01:145038 18:006402 --:------ 1260 003 00182B",  # setpoint
+            "RP --- 01:145038 18:006402 --:------ 1260 003 00182B",  # setpoint
+            rssi="045",
         )
     )
 

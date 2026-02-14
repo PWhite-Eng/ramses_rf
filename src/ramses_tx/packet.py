@@ -62,6 +62,7 @@ class Packet(Frame):
 
         self._dtm: dt = dtm
         self._rssi: str = rssi or "---"
+
         self.comment: str = kwargs.get("comment", "")
         self.error_text: str = kwargs.get("err_msg", "")
         self.raw_frame: str = kwargs.get("raw_frame", "")
@@ -125,7 +126,10 @@ class Packet(Frame):
         fragment, _, comment = pkt_line.partition("#")
         fragment, _, err_msg = fragment.partition("*")
         pkt_str, _, _ = fragment.partition("<")  # discard any parser hints
-        return map(str.strip, (pkt_str, err_msg, comment))  # type: ignore[return-value]
+
+        # Use rstrip() instead of strip() for pkt_str to preserve leading spaces
+        # (required for ' I' and ' W' verbs)
+        return pkt_str.rstrip(), err_msg.strip(), comment.strip()
 
     @classmethod
     def _from_cmd(cls, cmd: Command, dtm: dt | None = None) -> Packet:

@@ -46,7 +46,7 @@ DEFAULT_MAX_SLEEP = 0.1
 
 II_CMD_STR_0 = " I --- 01:006056 --:------ 01:006056 1F09 003 0005C8"
 II_CMD_0 = Command(II_CMD_STR_0)
-II_PKT_0 = Packet(dt.now(), f"... {II_CMD_STR_0}")
+II_PKT_0 = Packet(dt.now(), II_CMD_STR_0)
 
 # TIP: using 18:000730 as the source will prevent impersonation alerts
 
@@ -54,15 +54,15 @@ RQ_CMD_STR_0 = "RQ --- 18:000730 01:222222 --:------ 12B0 001 00"
 RP_CMD_STR_0 = "RP --- 01:222222 18:000730 --:------ 12B0 003 000000"
 
 RQ_CMD_0 = Command(RQ_CMD_STR_0)
-RQ_PKT_0 = Packet(dt.now(), f"... {RQ_CMD_STR_0}")
-RP_PKT_0 = Packet(dt.now(), f"... {RP_CMD_STR_0}")
+RQ_PKT_0 = Packet(dt.now(), RQ_CMD_STR_0)
+RP_PKT_0 = Packet(dt.now(), RP_CMD_STR_0)
 
 RQ_CMD_STR_1 = "RQ --- 18:000730 01:222222 --:------ 12B0 001 01"
 RP_CMD_STR_1 = "RP --- 01:222222 18:000730 --:------ 12B0 003 010000"
 
 RQ_CMD_1 = Command(RQ_CMD_STR_1)
-RQ_PKT_1 = Packet(dt.now(), f"... {RQ_CMD_STR_1}")
-RP_PKT_1 = Packet(dt.now(), f"... {RP_CMD_STR_1}")
+RQ_PKT_1 = Packet(dt.now(), RQ_CMD_STR_1)
+RP_PKT_1 = Packet(dt.now(), RP_CMD_STR_1)
 
 
 # ### FIXTURES #########################################################################

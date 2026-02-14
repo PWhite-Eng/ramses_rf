@@ -17,44 +17,47 @@ class TestMessageIndex:
     _NOW = dt.now().replace(microsecond=0)
 
     msg1: Message = Message._from_pkt(
-        Packet(_NOW, "...  I --- 32:166025 --:------ 32:166025 1298 003 007FFF")
+        Packet(_NOW, " I --- 32:166025 --:------ 32:166025 1298 003 007FFF")
     )
     msg2: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=10),
-            "...  I --- 32:166025 --:------ 32:166025 1298 003 001230",  # co2_level
+            " I --- 32:166025 --:------ 32:166025 1298 003 001230",  # co2_level
         )
     )
     msg3: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=20),
-            "060  I --- 01:087939 --:------ 01:087939 2309 021 0007D00106400201F40301F40401F40501F40601F4",
+            " I --- 01:087939 --:------ 01:087939 2309 021 0007D00106400201F40301F40401F40501F40601F4",
+            rssi="060",
         )
     )
     msg4: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=30),
-            "060  I --- 32:166025 --:------ 32:166025 31DA 030 00EF00019E00EF06E17FFF08020766BE09001F0000000000008500850000",
+            " I --- 32:166025 --:------ 32:166025 31DA 030 00EF00019E00EF06E17FFF08020766BE09001F0000000000008500850000",
+            rssi="060",
         )
     )
     msg5: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=40),
-            "...  I --- 04:189078 --:------ 01:145038 3150 002 0100",  # heat_demand
+            " I --- 04:189078 --:------ 01:145038 3150 002 0100",  # heat_demand
         )
     )
 
     msg6: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=50),
-            "061 RP --- 10:078099 01:087939 --:------ 3220 005 00C0110000",  # OTB
+            "RP --- 10:078099 01:087939 --:------ 3220 005 00C0110000",  # OTB
+            rssi="061",
         )
     )
 
     msg7: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=60),
-            "...  I --- 04:189078 --:------ 01:145038 12B0 003 040000",
+            " I --- 04:189078 --:------ 01:145038 12B0 003 040000",
         )
     )
 

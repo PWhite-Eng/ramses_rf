@@ -58,14 +58,15 @@ class Test_dispatcher_gateway:
     msg5: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=40),
-            "...  I --- 04:189078 --:------ 01:145038 3150 002 0100",  # heat_demand
+            " I --- 04:189078 --:------ 01:145038 3150 002 0100",  # heat_demand
         )
     )
 
     msg6: Message = Message._from_pkt(
         Packet(
             _NOW + td(seconds=50),
-            "061 RP --- 10:078099 01:087939 --:------ 3220 005 00C0110000",  # OTB
+            "RP --- 10:078099 01:087939 --:------ 3220 005 00C0110000",  # OTB
+            rssi="061",
         )
     )
 
@@ -92,19 +93,19 @@ class Test_dispatcher_gateway:
         msg1: Message = Message._from_pkt(
             Packet(
                 self._NOW,
-                "...  I --- 01:158182 --:------ 01:158182 000A 048 001001F40BB8011101F40BB8021101F40BB8031001F40BB8041101F40BB8051101F40BB8061101F40BB8071001F40BB8",
+                " I --- 01:158182 --:------ 01:158182 000A 048 001001F40BB8011101F40BB8021101F40BB8031001F40BB8041101F40BB8051101F40BB8061101F40BB8071001F40BB8",
             )
         )
         msg2: Message = Message._from_pkt(
             Packet(
                 self._NOW + td(seconds=1),  # delta dtm < 3 secs
-                "...  I --- 01:158182 --:------ 01:158182 000A 006 081001F409C4",
+                " I --- 01:158182 --:------ 01:158182 000A 006 081001F409C4",
             )
         )
         msg3: Message = Message._from_pkt(
             Packet(
                 self._NOW + td(seconds=10),  # delta dtm > 3 secs
-                "...  I --- 01:158182 --:------ 01:158182 000A 006 081001F409C4",
+                " I --- 01:158182 --:------ 01:158182 000A 006 081001F409C4",
             )
         )
         assert msg1._has_array
@@ -124,7 +125,7 @@ class TestDispatcherErrorHandling:
         msg = Message._from_pkt(
             Packet(
                 dt.now(),
-                "...  I --- 01:000001 --:------ 01:000001 0001 005 00FFFF0200",
+                " I --- 01:000001 --:------ 01:000001 0001 005 00FFFF0200",
             )
         )
 
@@ -148,7 +149,7 @@ class TestDispatcherErrorHandling:
         msg = Message._from_pkt(
             Packet(
                 dt.now(),
-                "...  I --- 01:000001 --:------ 01:000001 0001 005 00FFFF0200",
+                " I --- 01:000001 --:------ 01:000001 0001 005 00FFFF0200",
             )
         )
 
