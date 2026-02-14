@@ -116,7 +116,9 @@ class EvohomeStub:
 
 def _proc_log_line(log_line: str) -> None:
     try:
-        pkt = Packet.from_file(log_line[:26], log_line[27:])
+        # Separate RSSI from the Frame (e.g. "095 RQ ...")
+        rssi, frame = log_line[27:].split(" ", 1)
+        pkt = Packet.from_file(log_line[:26], frame, rssi=rssi)
     except ValueError:
         return
 
@@ -133,7 +135,8 @@ def _proc_null_fault_entry(fault_log: FaultLog, _log_idx: LogIdxT = "00") -> Non
     cmd = Command.from_attrs(
         I_, CTL_ID, Code._0418, f"0000{_log_idx}B0000000000000000000007FFFFF7000000000"
     )
-    fault_log.handle_msg(Message(Packet._from_cmd(cmd)))
+    # Packet._from_cmd(cmd) is deprecated/broken due to strict whitespace rules
+    fault_log.handle_msg(Message(Packet(dt.now(), cmd._frame)))
 
 
 def _proc_test_fault_entry(
@@ -151,7 +154,8 @@ def _proc_test_fault_entry(
         _log_idx=_log_idx,
         timestamp=entry.timestamp,
     )
-    fault_log.handle_msg(Message(Packet._from_cmd(cmd)))
+    # Packet._from_cmd(cmd) is deprecated/broken due to strict whitespace rules
+    fault_log.handle_msg(Message(Packet(dt.now(), cmd._frame)))
 
 
 # ### TESTS ###########################################################################
