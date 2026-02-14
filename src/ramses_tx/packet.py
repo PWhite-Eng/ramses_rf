@@ -47,23 +47,21 @@ class Packet(Frame):
     _dtm: dt
     _rssi: str
 
-    def __init__(self, dtm: dt, frame: str, **kwargs: Any) -> None:
+    def __init__(
+        self, dtm: dt, frame: str, rssi: str | None = None, **kwargs: Any
+    ) -> None:
         """Create a packet from a raw frame string.
 
         :param dtm: The timestamp when the packet was received
-        :type dtm: dt
-        :param frame: The raw frame string, typically including RSSI
-        :type frame: str
+        :param frame: The raw frame string (excluding RSSI)
+        :param rssi: The RSSI value (e.g. "063"), defaults to "---"
         :param kwargs: Metadata including 'comment', 'err_msg', or 'raw_frame'
         :raises PacketInvalid: If the frame content is malformed.
         """
-
-        super().__init__(frame[4:])  # remove RSSI
+        super().__init__(frame)
 
         self._dtm: dt = dtm
-
-        self._rssi: str = frame[0:3]
-
+        self._rssi: str = rssi or "---"
         self.comment: str = kwargs.get("comment", "")
         self.error_text: str = kwargs.get("err_msg", "")
         self.raw_frame: str = kwargs.get("raw_frame", "")
@@ -106,7 +104,7 @@ class Packet(Frame):
             dtm = self.dtm.isoformat(timespec="microseconds")
         except AttributeError:
             dtm = dt.min.isoformat(timespec="microseconds")
-        return f"{dtm} ... {self}{hdr}"
+        return f"{dtm} {self._rssi} {self}{hdr}"
 
     def __str__(self) -> str:
         """Return a brief readable string representation of this object aka 'header'."""
@@ -143,20 +141,39 @@ class Packet(Frame):
         return cls(dt.fromisoformat(dtm), frame, comment=comment)
 
     @classmethod
-    def from_file(cls, dtm: str, pkt_line: str) -> Packet:
+    def from_file(cls, dtm: str, frame: str, rssi: str | None = None) -> Packet:
         """Create a packet from a log file line."""
-        frame, err_msg, comment = cls._partition(pkt_line)
-        if not frame:
+        pkt_line, err_msg, comment = cls._partition(frame)
+        if not pkt_line:
             raise ValueError(f"null frame: >>>{frame}<<<")
-        return cls(dt.fromisoformat(dtm), frame, err_msg=err_msg, comment=comment)
+        return cls(
+            dt.fromisoformat(dtm),
+            pkt_line,
+            rssi=rssi,
+            err_msg=err_msg,
+            comment=comment,
+        )
 
     @classmethod
-    def from_port(cls, dtm: dt, pkt_line: str, raw_line: bytes | None = None) -> Packet:
+    def from_port(
+        cls,
+        dtm: dt,
+        pkt_line: str,
+        raw_line: bytes | None = None,
+        rssi: str | None = None,
+    ) -> Packet:
         """Create a packet from a USB port (HGI80, evofw3)."""
         frame, err_msg, comment = cls._partition(pkt_line)
         if not frame:
             raise ValueError(f"null frame: >>>{frame}<<<")
-        return cls(dtm, frame, err_msg=err_msg, comment=comment, raw_frame=raw_line)
+        return cls(
+            dtm,
+            frame,
+            rssi=rssi,
+            err_msg=err_msg,
+            comment=comment,
+            raw_frame=raw_line,
+        )
 
 
 # TODO: remove None as a possible return value

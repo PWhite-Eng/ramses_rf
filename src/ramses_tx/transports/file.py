@@ -119,7 +119,7 @@ class FileTransport(_ReadTransport, _FileTransportAbstractor):
             )
 
     async def _process_line_from_raw(self, line: str) -> None:
-        # Refactor Fix: Strip inline comments (e.g. " ... 10 # Truncated")
+        # Strip inline comments (e.g. " ... 10 # Truncated")
         # 1. split("#", 1)[0] takes everything before the first #
         # 2. strip() removes the newline AND any spaces between the packet and the #
         if "#" in line:
@@ -134,9 +134,10 @@ class FileTransport(_ReadTransport, _FileTransportAbstractor):
             # dtm_str may be None if not matched, default to "" or handle downstream
             dtm_str = match.group("dtm") or ""
             # Preserved RSSI if present so base.py receives it
-            rssi = match.group("rssi") or ""
+            rssi = match.group("rssi") or "---"
             pkt = match.group("pkt")
-            frame = f"{rssi} {pkt}" if rssi else pkt
+
+            frame = f"{rssi} {pkt}"
             await self._process_line(dtm_str, frame)
 
     async def _process_line(self, dtm_str: str, frame: str) -> None:

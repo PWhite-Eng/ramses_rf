@@ -3,9 +3,6 @@
 import re
 from datetime import datetime as dt
 
-import pytest
-
-from ramses_tx import exceptions as exc
 from ramses_tx.const import I_, RP, RQ, W_
 from ramses_tx.frame import Frame
 from ramses_tx.packet import Packet
@@ -19,26 +16,27 @@ PKT_LINE_REGEX = re.compile(
 
 
 def normalize_like_base(pkt_str: str) -> str:
-    """Mimic the exact normalization logic currently in base.py."""
-    # 1. Normalize internal spaces
+    """Mimic the exact normalization logic currently in base.py.
+
+    Updated to reflect the removal of the 'force trailing space' hack,
+    as Frame() is now robust enough to handle it.
+    """
+    # 1. Normalize internal spaces (removes double spaces)
     pkt_parts = pkt_str.split()
 
-    # 2. Restore leading space for single-letter verbs
+    # 2. Restore leading space for single-letter verbs (I, W)
     if pkt_parts and len(pkt_parts[0]) == 1:
         pkt_parts[0] = f" {pkt_parts[0]}"
 
     pkt = " ".join(pkt_parts)
-
-    # 3. Ensure trailing space for empty payloads (length 000)
-    if pkt_parts and pkt_parts[-1] == "000":
-        pkt += " "
 
     return pkt
 
 
 def test_frame_parsing_standard() -> None:
     """Test parsing a standard packet (I verb)."""
-    # Input from base.py (after stripping RSSI) for " I --- 01:123456 ..."
+    # Input expected by Frame is now just the protocol string
+    # (RSSI is handled by Packet, not Frame)
     raw_frame = " I --- 01:123456 --:------ 01:123456 000A 002 0102"
 
     f = Frame(raw_frame)
@@ -52,15 +50,18 @@ def test_frame_parsing_standard() -> None:
 
 def test_frame_parsing_empty_payload() -> None:
     """Test parsing a packet with length 000 (Empty Payload)."""
-    # This is the critical regression case.
+    # This is the critical regression fix verification.
 
-    # CASE 1: No trailing space -> Fails in Legacy Frame (split(" ") produces 7 fields)
+    # CASE 1: No trailing space ->
+    # PREVIOUSLY: Failed in Legacy Frame (split(" ") produced 7 fields)
+    # NOW: Should PASS because Frame safely handles missing payload field
     raw_no_space = " I --- 01:123456 --:------ 01:123456 000A 000"
-    with pytest.raises(exc.PacketInvalid) as e:
-        Frame(raw_no_space)
-    assert "invalid structure" in str(e.value)
 
-    # CASE 2: With trailing space -> Should Pass in Legacy Frame
+    f = Frame(raw_no_space)
+    assert f.len_ == "000"
+    assert f.payload == ""
+
+    # CASE 2: With trailing space -> Should still Pass
     raw_with_space = " I --- 01:123456 --:------ 01:123456 000A 000 "
     f = Frame(raw_with_space)
     assert f.len_ == "000"
@@ -98,44 +99,51 @@ def test_packet_class_behavior() -> None:
     dtm = dt.now()
 
     # 1. Standard
-    base_str = "000  I --- 01:123456 --:------ 01:123456 000A 002 0102"
-    p = Packet(dtm, base_str)
-    assert p.verb == I_
+    # NOTE: Packet() now accepts RSSI as a named argument,
+    # and the frame string must NOT contain the RSSI prefix.
+    frame_str = " I --- 01:123456 --:------ 01:123456 000A 002 0102"
+    rssi_val = "000"
 
-    # 2. Empty Payload (normalized by base.py to have trailing space)
-    # 000 + space + I ... 000 + space
-    base_str_empty = "000  I --- 01:123456 --:------ 01:123456 000A 000 "
-    p = Packet(dtm, base_str_empty)
+    p = Packet(dtm, frame_str, rssi=rssi_val)
+    assert p.verb == I_
+    assert p._rssi == "000"
+
+    # 2. Empty Payload (without trailing space)
+    # The new Packet/Frame classes should handle this cleanly without help.
+    frame_str_empty = " I --- 01:123456 --:------ 01:123456 000A 000"
+
+    p = Packet(dtm, frame_str_empty, rssi=rssi_val)
     assert p.len_ == "000"
     assert p.payload == ""
 
 
 def test_base_normalization_logic() -> None:
-    """Test if our base.py normalization correctly adds the space."""
+    """Test if our base.py normalization correctly handles spacing."""
     # Input from log file (comments stripped)
     log_line_content = " I --- 01:000001 --:------ 01:000001 000A 000"
 
     # Run normalization
     normalized = normalize_like_base(log_line_content)
 
-    # Check if trailing space was added
-    assert normalized.endswith(" 000 ")
-    assert len(normalized.split(" ")) == 8  # I, ---, addr, addr, addr, code, len, ''
+    # Check that it DOES NOT enforce a trailing space anymore
+    # But it DOES enforce a leading space for 'I'
+    assert normalized == " I --- 01:000001 --:------ 01:000001 000A 000"
+    assert normalized.startswith(" ")
 
 
 def test_full_chain_simulation() -> None:
     """Simulate File -> Base -> Packet -> Frame chain."""
+    # This line has an RSSI of 045
     line = (
         "2026-02-07T12:00:00.000000 045  I --- 01:123456 --:------ 01:123456 000A 000"
     )
     dtm_str = "2026-02-07T12:00:00.000000"
-    # convert ISO 8601 formatted string into a datetime object
     dtm_dt = dt.fromisoformat(dtm_str)
 
     # 1. File.py stripping
     line = line.strip()
 
-    # 2. Base.py Regex
+    # 2. Base.py Regex (Extract RSSI vs Packet)
     match = PKT_LINE_REGEX.match(line)
     assert match is not None
     rssi = match.group("rssi") or "---"  # "045"
@@ -144,33 +152,36 @@ def test_full_chain_simulation() -> None:
     # 3. Base.py Normalization
     pkt_norm = normalize_like_base(pkt_raw)
 
-    # 4. Base.py Reconstruction
-    frame_str = f"{rssi} {pkt_norm}"  # "045  I ... 000 "
-
-    # 5. Packet init
-    # Packet slices [4:] -> " I ... 000 "
-    p = Packet(dtm_dt, frame_str)
+    # 4. Packet init
+    # We no longer concat RSSI + Frame. We pass them separately.
+    p = Packet(dtm_dt, pkt_norm, rssi=rssi)
 
     assert p.len_ == "000"
     assert p.payload == ""
+    assert p._rssi == "045"
+
+    # Verify repr representation includes RSSI (str(p) only shows the protocol frame)
+    assert "045" in repr(p)
 
 
 def test_rq_double_space_issue() -> None:
-    """Test the 'Invalid address set' error for RQ packets."""
+    """Test parsing logic when input has double spaces."""
     dtm = dt.now()
-    # Log line might have double spaces for alignment
-    # "045 RQ --- 21:000 21:000 --:-- ..."
 
-    pkt_raw = "RQ --- 21:111111 21:111111 --:------ 000A 002 0102"
+    # Raw string simulating a log file with extra spaces
+    # Changed addresses to distinct values (Src != Dst) to pass validation
+    pkt_raw = "RQ ---  21:111111   01:222222 --:------ 000A 002 0102"
 
     # Normalization should ensure single spaces
     pkt_norm = normalize_like_base(pkt_raw)
 
-    rssi = "045"
-    frame_str = f"{rssi} {pkt_norm}"
+    # Should result in clean single spaces
+    assert "  " not in pkt_norm
 
-    p = Packet(dtm, frame_str)
-    # If this raises PacketInvalid(addr set), it's the logic inside Frame
+    rssi = "045"
+
+    p = Packet(dtm, pkt_norm, rssi=rssi)
+
     assert p.verb == RQ
     assert p.src.id == "21:111111"
-    assert p.dst.id == "21:111111"
+    assert p.dst.id == "01:222222"

@@ -320,30 +320,27 @@ class _ReadTransport(RamsesTransport):
         if match:
             rssi = match.group("rssi") or "---"
             pkt = match.group("pkt")
+        else:
+            # Fallback (rare) if regex fails but strip passed
+            rssi = "---"
+            pkt = frame
 
-            # NORMALIZATION 1: Normalize internal spaces to single spaces
-            # Frame.py uses split(" "), so double spaces create empty fields and shift indices.
-            pkt_parts = pkt.split()
+        # NORMALIZATION: Split to remove extra spaces, fix verb alignment
+        pkt_parts = pkt.split()
 
-            # NORMALIZATION 2: Restore leading space for single-letter verbs (I, W)
-            # Frame.py expects " I" (2 chars) not "I".
-            if pkt_parts and len(pkt_parts[0]) == 1:
-                pkt_parts[0] = f" {pkt_parts[0]}"
+        if not pkt_parts:
+            return
 
-            pkt = " ".join(pkt_parts)
+        # Ensure single letter verbs have leading space
+        if len(pkt_parts[0]) == 1:
+            pkt_parts[0] = f" {pkt_parts[0]}"
 
-            # NORMALIZATION 3: Ensure trailing space for empty payloads
-            # Frame.py logic: fields = frame.lstrip().split(" ")
-            # If length is 000, we need fields[7] to exist (as empty string).
-            # "000A 000" split(" ") -> 7 items. "000A 000 " split(" ") -> 8 items (last is '').
-            # We explicitly check for length "000" at the end of the packet string.
-            if pkt_parts[-1] == "000":
-                pkt += " "
-
-            frame = f"{rssi} {pkt}"
+        # Reconstruct normalized packet string
+        pkt = " ".join(pkt_parts)
 
         try:
-            pkt = Packet.from_file(dtm_str, frame)
+            # Instantiate explicitly passing the separated RSSI
+            pkt_obj = Packet.from_file(dtm_str, pkt, rssi=rssi)
         except ValueError as err:
             _LOGGER.debug("%s < PacketInvalid(%s)", frame, err)
             return
@@ -351,7 +348,7 @@ class _ReadTransport(RamsesTransport):
             _LOGGER.warning("%s < PacketInvalid(%s)", frame, err)
             return
 
-        self._pkt_read(pkt)
+        self._pkt_read(pkt_obj)
 
     def _pkt_read(self, pkt: Packet) -> None:
         self._this_pkt, self._prev_pkt = pkt, self._this_pkt
