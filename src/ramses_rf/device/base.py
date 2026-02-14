@@ -460,6 +460,11 @@ class DeviceHeat(Device):  # Heat domain: Honeywell CH/DHW or compatible
             return
 
         if not self._iz_controller and msg.code in CODES_ONLY_FROM_CTL:
+            if (
+                self.type not in DEV_TYPE_MAP.CONTROLLERS
+            ):  # potentially can be controllers
+                return
+
             if self._iz_controller is None:
                 _LOGGER.info(f"{msg!r} # IS_CONTROLLER (00): is TRUE")
                 self._make_tcs_controller(msg=msg)
