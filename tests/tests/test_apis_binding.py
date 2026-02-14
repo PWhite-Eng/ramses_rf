@@ -79,7 +79,7 @@ async def test_initiate_binding_process(dev_class: type[Fakeable]) -> None:
     ) as mocked_method:
         gwy._include[dev_addr.id] = {}  # this shouldn't be needed? a BUG?
 
-        dev = dev_class(gwy, dev_addr)  # type: ignore[arg-type]
+        dev = dev_class(gwy, dev_addr)
         dev._make_fake()
 
         _ = await dev.initiate_binding_process()
