@@ -10,7 +10,7 @@ from io import TextIOWrapper
 from typing import TYPE_CHECKING, Any
 
 from .. import exceptions as exc
-from ..const import SZ_READER_TASK
+from ..const import PKT_LINE_REGEX, SZ_READER_TASK
 from .base import _ReadTransport
 
 if TYPE_CHECKING:
@@ -119,8 +119,25 @@ class FileTransport(_ReadTransport, _FileTransportAbstractor):
             )
 
     async def _process_line_from_raw(self, line: str) -> None:
-        if (line := line.strip()) and line[:1] != "#":
-            await self._process_line(line[:26], line[27:])
+        # Refactor Fix: Strip inline comments (e.g. " ... 10 # Truncated")
+        # 1. split("#", 1)[0] takes everything before the first #
+        # 2. strip() removes the newline AND any spaces between the packet and the #
+        if "#" in line:
+            line = line.split("#", 1)[0]
+
+        if not (line := line.strip()):
+            return
+
+        # Use the centralized regex to extract timestamp and packet
+        match = PKT_LINE_REGEX.match(line)
+        if match:
+            # dtm_str may be None if not matched, default to "" or handle downstream
+            dtm_str = match.group("dtm") or ""
+            # Preserved RSSI if present so base.py receives it
+            rssi = match.group("rssi") or ""
+            pkt = match.group("pkt")
+            frame = f"{rssi} {pkt}" if rssi else pkt
+            await self._process_line(dtm_str, frame)
 
     async def _process_line(self, dtm_str: str, frame: str) -> None:
         if not self._reading:

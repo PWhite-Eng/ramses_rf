@@ -23,6 +23,7 @@ from ..const import (
     DEFAULT_TIMEOUT_PORT as DEFAULT_TIMEOUT_PORT,
     DUTY_CYCLE_DURATION,
     I_,
+    PKT_LINE_REGEX,
     RP,
     RQ,
     SZ_ACTIVE_HGI,
@@ -311,8 +312,35 @@ class _ReadTransport(RamsesTransport):
         )
 
     def _frame_read(self, dtm_str: str, frame: str) -> None:
-        if not frame.strip():
+        if not (frame := frame.strip()):
             return
+
+        # Refactor Fix: Use regex to extract RSSI and Packet
+        match = PKT_LINE_REGEX.match(frame)
+        if match:
+            rssi = match.group("rssi") or "---"
+            pkt = match.group("pkt")
+
+            # NORMALIZATION 1: Normalize internal spaces to single spaces
+            # Frame.py uses split(" "), so double spaces create empty fields and shift indices.
+            pkt_parts = pkt.split()
+
+            # NORMALIZATION 2: Restore leading space for single-letter verbs (I, W)
+            # Frame.py expects " I" (2 chars) not "I".
+            if pkt_parts and len(pkt_parts[0]) == 1:
+                pkt_parts[0] = f" {pkt_parts[0]}"
+
+            pkt = " ".join(pkt_parts)
+
+            # NORMALIZATION 3: Ensure trailing space for empty payloads
+            # Frame.py logic: fields = frame.lstrip().split(" ")
+            # If length is 000, we need fields[7] to exist (as empty string).
+            # "000A 000" split(" ") -> 7 items. "000A 000 " split(" ") -> 8 items (last is '').
+            # We explicitly check for length "000" at the end of the packet string.
+            if pkt_parts[-1] == "000":
+                pkt += " "
+
+            frame = f"{rssi} {pkt}"
 
         try:
             pkt = Packet.from_file(dtm_str, frame)

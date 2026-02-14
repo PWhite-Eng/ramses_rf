@@ -262,6 +262,16 @@ SZ_FLAME_ACTIVE: Final = "flame_active"
 SZ_SUMMER_MODE: Final = "summer_mode"
 SZ_OTC_ACTIVE: Final = "otc_active"
 
+# Regex to extract Timestamp, RSSI, and Packet from a log line
+# e.g. "2020-01-01T00:00:00.000000 000 RQ --- ..."
+# Groups: dtm=Timestamp (optional), rssi=RSSI (optional), pkt=Packet
+# Valid RSSI: 3 digits or "---"
+PKT_LINE_REGEX = re.compile(
+    r"^(?P<dtm>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3,6})?\s*"
+    r"(?P<rssi>\d{3}|---)?\s*"
+    r"(?P<pkt>.*)$"
+)
+
 
 @verify(EnumCheck.UNIQUE)
 class Priority(IntEnum):
