@@ -267,8 +267,8 @@ SZ_OTC_ACTIVE: Final = "otc_active"
 # Groups: dtm=Timestamp (optional), rssi=RSSI (optional), pkt=Packet
 # Valid RSSI: 3 digits or "---"
 PKT_LINE_REGEX = re.compile(
-    r"^(?P<dtm>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3,6})?\s*"
-    r"(?P<rssi>\d{3}|---)?\s*"
+    r"^(?P<dtm>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\.\d{3,6})?\s*"
+    r"(?P<rssi>\d{3}|---|(?:\.{3}))?\s*"
     r"(?P<pkt>.*)$"
 )
 
