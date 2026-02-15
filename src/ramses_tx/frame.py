@@ -526,14 +526,15 @@ def _pkt_idx(pkt: Frame) -> None | bool | str:  # _has_array, _has_ctl
     if pkt.code in (Code._31D9, Code._31DA):
         return pkt.payload[:2]
 
+    # FIX: Always return the index byte for simple codes.
+    # Do not convert '00' to False.
+    if pkt.code in CODE_IDX_ARE_SIMPLE:
+        return pkt.payload[:2]
+
     if pkt.payload[:2] != "00":
         raise exc.PacketPayloadInvalid(
             f"Packet idx is {pkt.payload[:2]}, but expecting no idx (00) (0xAB)"
         )  # TODO: add a test for this
-
-    if pkt.code in CODE_IDX_ARE_SIMPLE:
-        # WAS: return None  # False  # TODO: return None (less precise) or risk false -ves?
-        return pkt.payload[:2]  # FIX: Return the index (e.g., '0A')
 
     # mutex 4/4, CODE_IDX_UNKNOWN: an unknown code
     _LOGGER.info(f"{pkt} # Unable to determine payload index (is probably OK)")

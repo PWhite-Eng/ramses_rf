@@ -1215,7 +1215,7 @@ class Entity(_Discovery):
 
 
 class Parent(Entity):  # A System, Zone, DhwZone or a UfhController
-    """A Parent can be a System (TCS), a heating Zone, a DHW Zone, or a UfhController.
+    """A Parent can be a System, a heating Zone, a DHW Zone, or a UfhController.
 
     For a System, children include the appliance controller, the children of all Zones
     (incl. the DHW Zone), and also any UFH controllers.
@@ -1292,7 +1292,8 @@ class Parent(Entity):  # A System, Zone, DhwZone or a UfhController
             assert isinstance(self, DhwZone)  # TODO: remove me
             assert isinstance(child, DhwSensor)
             if self._dhw_sensor and self._dhw_sensor is not child:
-                raise exc.SystemSchemaInconsistent(
+                # WAS: raise exc.SystemSchemaInconsistent(...)
+                _LOGGER.warning(
                     f"{self} changed dhw_sensor (from {self._dhw_sensor} to {child})"
                 )
             self._dhw_sensor = child
@@ -1300,7 +1301,8 @@ class Parent(Entity):  # A System, Zone, DhwZone or a UfhController
         elif is_sensor and hasattr(self, SZ_SENSOR):  # HTG zone
             assert isinstance(self, Zone)  # TODO: remove me
             if self.sensor and self.sensor is not child:
-                raise exc.SystemSchemaInconsistent(
+                # WAS: raise exc.SystemSchemaInconsistent(...)
+                _LOGGER.warning(
                     f"{self} changed zone sensor (from {self.sensor} to {child})"
                 )
             self._sensor = child
@@ -1326,7 +1328,8 @@ class Parent(Entity):  # A System, Zone, DhwZone or a UfhController
             assert isinstance(self, DhwZone)  # TODO: remove me
             assert isinstance(child, BdrSwitch)
             if self._htg_valve and self._htg_valve is not child:
-                raise exc.SystemSchemaInconsistent(
+                # WAS: raise exc.SystemSchemaInconsistent(...)
+                _LOGGER.warning(
                     f"{self} changed htg_valve (from {self._htg_valve} to {child})"
                 )
             self._htg_valve = child
@@ -1335,7 +1338,8 @@ class Parent(Entity):  # A System, Zone, DhwZone or a UfhController
             assert isinstance(self, DhwZone)  # TODO: remove me
             assert isinstance(child, BdrSwitch)
             if self._dhw_valve and self._dhw_valve is not child:
-                raise exc.SystemSchemaInconsistent(
+                # WAS: raise exc.SystemSchemaInconsistent(...)
+                _LOGGER.warning(
                     f"{self} changed dhw_valve (from {self._dhw_valve} to {child})"
                 )
             self._dhw_valve = child
@@ -1344,7 +1348,8 @@ class Parent(Entity):  # A System, Zone, DhwZone or a UfhController
             assert isinstance(self, System)  # TODO: remove me
             assert isinstance(child, BdrSwitch | OtbGateway)
             if self._app_cntrl and self._app_cntrl is not child:
-                raise exc.SystemSchemaInconsistent(
+                # WAS: raise exc.SystemSchemaInconsistent(...)
+                _LOGGER.warning(
                     f"{self} changed app_cntrl (from {self._app_cntrl} to {child})"
                 )
             self._app_cntrl = child
@@ -1359,8 +1364,9 @@ class Parent(Entity):  # A System, Zone, DhwZone or a UfhController
                 f"not a valid combination for {self}: {child}|{child_id}|{is_sensor}"
             )
 
-        self.childs.append(child)
-        self.child_by_id[child.id] = child
+        if child not in self.childs:
+            self.childs.append(child)
+            self.child_by_id[child.id] = child
 
 
 class Child(Entity):  # A Zone, Device or a UfhCircuit
@@ -1468,10 +1474,7 @@ class Child(Entity):  # A Zone, Device or a UfhCircuit
         #     child_id = parent._child_id  # or, for zones: parent.idx
 
         if self._parent and self._parent != parent:
-            # raise exc.SystemSchemaInconsistent(
-            #     f"{self} can't change parent "
-            #     f"({self._parent}_{self._child_id} to {parent}_{child_id})"
-            # )
+            # WAS: raise exc.SystemSchemaInconsistent(...)
             _LOGGER.warning(
                 f"{self} changing parent: {self._parent}_{self._child_id} to {parent}_{child_id}"
             )
@@ -1577,9 +1580,10 @@ class Child(Entity):  # A Zone, Device or a UfhCircuit
 
         if self.ctl and self.ctl is not ctl:
             # NOTE: assume a device is bound to only one CTL (usu. best practice)
-            raise exc.SystemSchemaInconsistent(
-                f"{self} can't change controller: {self.ctl} to {ctl} "
-                "(or perhaps the device has multiple controllers?"
+            # WAS: raise exc.SystemSchemaInconsistent(...)
+            _LOGGER.warning(
+                f"{self} changing controller: {self.ctl} to {ctl} "
+                "(or perhaps the device has multiple controllers?)"
             )
 
         parent._add_child(self, child_id=child_id, is_sensor=is_sensor)
