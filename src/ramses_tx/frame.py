@@ -133,14 +133,6 @@ class Frame:
         Raise an exception InvalidPacketError (InvalidAddrSetError) if it is not valid.
         """
 
-        # Check payload length against length field
-        # Use split because payload might be empty or followed by comment
-        # Note: frame[46:] assumption is risky if frame is not strictly formatted,
-        # but kept for legacy consistency (though decoupled payload logic above is better).
-        # We'll use the already parsed attributes for safety.
-        if len(self.payload) != int(self.len_) * 2:
-            raise exc.PacketInvalid("Bad frame: Payload length mismatch")
-
         try:
             # self.src, self.dst, *self._addrs = pkt_addrs(self._frame[7:36])
             src, dst, *addrs = pkt_addrs(self._frame[7:36])
@@ -149,6 +141,11 @@ class Frame:
 
         if not strict_checking:
             return
+
+        # Check payload length against length field
+        # Moved to strict checking to allow truncated packets in logs (Packet.from_file)
+        if len(self.payload) != int(self.len_) * 2:
+            raise exc.PacketInvalid("Bad frame: Payload length mismatch")
 
         try:  # Strict checking: helps users avoid constructing bad commands
             if addrs[0] == NON_DEV_ADDR:

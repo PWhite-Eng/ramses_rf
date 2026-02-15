@@ -51,7 +51,7 @@ _LOGGER = logging.getLogger(__name__)
 class MessageBase:
     """The Message class; will trap/log invalid msgs."""
 
-    def __init__(self, pkt: Packet) -> None:
+    def __init__(self, pkt: Packet, *, strict_checking: bool = False) -> None:
         """Create a message from a valid packet.
 
         :param pkt: The packet to process into a message
@@ -74,7 +74,10 @@ class MessageBase:
         self.code: Code = pkt.code
         self.len: int = pkt._len
 
-        self._payload = self._validate(self._pkt.payload)  # ? may raise PacketInvalid
+        # ? may raise PacketInvalid
+        self._payload = self._validate(
+            self._pkt.payload, strict_checking=strict_checking
+        )
 
         self._str: str = None  # type: ignore[assignment]
 
@@ -253,7 +256,9 @@ class MessageBase:
         return {index_name: self._pkt._idx}
 
     # TODO: needs work...
-    def _validate(self, raw_payload: str) -> dict | list[dict]:  # type: ignore[type-arg]
+    def _validate(
+        self, raw_payload: str, *, strict_checking: bool = False
+    ) -> dict | list[dict]:  # type: ignore[type-arg]
         """Validate a message packet payload, and parse it if valid.
 
         :return: a dict containing key: value pairs, or a list of those created from the payload
@@ -264,6 +269,14 @@ class MessageBase:
             # TODO: only accept invalid packets to/from HGI when flag raised
             _check_msg_payload(self, self._pkt.payload)  # ? InvalidPayloadError
 
+        except exc.PacketInvalid as err:
+            if strict_checking:
+                _LOGGER.warning("%s < %s", self._pkt, err)
+                raise err
+            # Truncated packets in logs are common, so we suppress the error
+            _LOGGER.warning("%s < %s (suppressed)", self._pkt, err)
+
+        try:
             if not self._has_payload and (
                 self.verb == RQ and self.code not in RQ_IDX_COMPLEX
             ):
@@ -287,7 +300,22 @@ class MessageBase:
             _LOGGER.exception("%s < %s", self._pkt, f"{err.__class__.__name__}({err})")
             raise exc.PacketInvalid("Bad packet") from err
 
-        except (AttributeError, LookupError, TypeError, ValueError) as err:  # TODO: dev
+        except (
+            AttributeError,
+            LookupError,
+            TypeError,
+            ValueError,
+        ) as err:  # TODO: dev
+            # If not strict, we treat value errors (like invalid temp) as a reason to
+            # drop the packet, rather than letting it propagate or crashing.
+            if not strict_checking:
+                _LOGGER.warning(
+                    "%s < Coding error (suppressed): %s",
+                    self._pkt,
+                    f"{err.__class__.__name__}({err})",
+                )
+                raise exc.PacketInvalid from err
+
             _LOGGER.exception(
                 "%s < Coding error: %s", self._pkt, f"{err.__class__.__name__}({err})"
             )
