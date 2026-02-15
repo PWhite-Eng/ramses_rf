@@ -532,7 +532,8 @@ def _pkt_idx(pkt: Frame) -> None | bool | str:  # _has_array, _has_ctl
         )  # TODO: add a test for this
 
     if pkt.code in CODE_IDX_ARE_SIMPLE:
-        return None  # False  # TODO: return None (less precise) or risk false -ves?
+        # WAS: return None  # False  # TODO: return None (less precise) or risk false -ves?
+        return pkt.payload[:2]  # FIX: Return the index (e.g., '0A')
 
     # mutex 4/4, CODE_IDX_UNKNOWN: an unknown code
     _LOGGER.info(f"{pkt} # Unable to determine payload index (is probably OK)")

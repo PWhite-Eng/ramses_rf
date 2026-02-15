@@ -1468,9 +1468,12 @@ class Child(Entity):  # A Zone, Device or a UfhCircuit
         #     child_id = parent._child_id  # or, for zones: parent.idx
 
         if self._parent and self._parent != parent:
-            raise exc.SystemSchemaInconsistent(
-                f"{self} can't change parent "
-                f"({self._parent}_{self._child_id} to {parent}_{child_id})"
+            # raise exc.SystemSchemaInconsistent(
+            #     f"{self} can't change parent "
+            #     f"({self._parent}_{self._child_id} to {parent}_{child_id})"
+            # )
+            _LOGGER.warning(
+                f"{self} changing parent: {self._parent}_{self._child_id} to {parent}_{child_id}"
             )
 
         # if self._child_id is not None and self._child_id != child_id:

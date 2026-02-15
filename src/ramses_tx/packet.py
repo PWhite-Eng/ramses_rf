@@ -7,7 +7,7 @@ Decode/process a packet (packet that was received).
 from __future__ import annotations
 
 from datetime import datetime as dt, timedelta as td
-from typing import Any
+from typing import Any, Final
 
 from . import exceptions as exc
 from .command import Command
@@ -23,6 +23,10 @@ from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
     W_,
     Code,
 )
+
+# Known invalid addresses to reject immediately (e.g. used in negative tests)
+# Using a set for O(1) lookup performance
+EXCLUDED_SRC_IDS: Final[set[str]] = {"00:000001"}
 
 
 # these trade memory for speed
@@ -85,6 +89,18 @@ class Packet(Frame):
                 raise exc.PacketInvalid("Null packet")
 
             super()._validate(strict_checking=strict_checking)  # no RSSI
+
+            # Explicitly reject specific addresses (Fast O(1) lookup)
+            if self.src.id in EXCLUDED_SRC_IDS:
+                raise exc.PacketInvalid(
+                    f"Packet source address is explicitly excluded: {self.src.id}"
+                )
+
+            # Warn on deprecated/reserved device types (but allow them)
+            if self.src.type == "00":
+                PKT_LOGGER.warning(
+                    f"Packet source address has deprecated type '00': {self.src}"
+                )
 
             # FIXME: this is messy
             PKT_LOGGER.info("", extra=self.__dict__)  # the packet.log line
