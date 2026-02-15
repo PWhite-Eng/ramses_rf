@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime as dt
 from logging.handlers import QueueListener
 from typing import TYPE_CHECKING, Any
 
@@ -218,6 +219,15 @@ class Gateway(Engine):
         if not self.ser_name:
             return f"Gateway(input_file={self._input_file})"
         return f"Gateway(port_name={self.ser_name}, port_config={self._port_config})"
+
+    def _dt_now(self) -> dt:
+        """Return the current time of the gateway (simulated if replaying).
+
+        This is used by Message objects to determine if they are expired.
+        """
+        if self._transport:
+            return getattr(self._transport, "_dt_now", dt.now)()
+        return dt.now()
 
     @property
     def hgi(self) -> HgiGateway | None:
@@ -798,6 +808,10 @@ class Gateway(Engine):
         :returns: None
         :rtype: None
         """
+
+        # We must attach the Gateway to the message so that we can check for
+        # expired packets (e.g. using simulated time if replaying a log)
+        msg._gwy = self
 
         super()._msg_handler(msg)
 

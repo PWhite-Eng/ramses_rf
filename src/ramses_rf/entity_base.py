@@ -505,7 +505,12 @@ class _MessageDB(_Entity):
         """
         if msg is None:
             return None
-        elif msg._expired:
+
+        # Allow expired messages if we are replaying a log file (regression testing)
+        # Use getattr to be safe
+        is_replay = getattr(self._gwy, "_input_file", None) is not None
+
+        if msg._expired and not is_replay:
             self._gwy._loop.call_soon(self._delete_msg, msg)  # HA bugs without defer
 
         if msg.code == Code._1FC9:  # NOTE: list of lists/tuples
@@ -780,6 +785,9 @@ class _MessageDB(_Entity):
         :return: flat dict of messages by Code
         """
         if not self._gwy.msg_db:
+            # FIX: Ensure legacy messages have gateway attached for expiration checks
+            for m in self._msgs_.values():
+                m._gwy = self._gwy
             return self._msgs_
             # _LOGGER.warning("Missing MessageIndex")
             # raise NotImplementedError
@@ -823,12 +831,14 @@ class _MessageDB(_Entity):
             """
             _ctx_qry = f"%{self.id[_ID_SLICE + 1 :]}%"
 
-        _msg_dict = {  # since 0.52.3 use ctx (context) instead of just the address
-            m.code: m
-            for m in self._gwy.msg_db.qry(
-                sql, (self.id[:_ID_SLICE], self.id[:_ID_SLICE], _ctx_qry)
-            )  # e.g. 01:123456_HW, 01:123456_02 (Zone)
-        }
+        _msg_dict = {}  # since 0.52.3 use ctx (context) instead of just the address
+        for m in self._gwy.msg_db.qry(
+            sql, (self.id[:_ID_SLICE], self.id[:_ID_SLICE], _ctx_qry)
+        ):  # e.g. 01:123456_HW, 01:123456_02 (Zone)
+            # FIX: Attach gateway to messages retrieved from DB
+            m._gwy = self._gwy
+            _msg_dict[m.code] = m
+
         # if CTL, remove 3150, 3220 heat_demand, both are only stored on children
         # HACK
         # if self.id[:3] == "01:" and self._SLUG == "CTL":

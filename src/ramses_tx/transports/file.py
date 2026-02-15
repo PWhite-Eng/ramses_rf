@@ -146,11 +146,9 @@ class FileTransport(_ReadTransport, _FileTransportAbstractor):
 
         self._frame_read(dtm_str, frame)
 
-        # Batch yields to improve performance on large files
-        self._count += 1
-        # Increased batch size to 500 to fix slow test performance
-        if self._count % 500 == 0:
-            await asyncio.sleep(0)
+        # Strict per-packet yielding is required for regression testing
+        # to ensure the simulated clock (_dt_now) matches the packet being processed.
+        await asyncio.sleep(0)
 
     def _close(self, exc: exc.RamsesException | None = None) -> None:
         super()._close(exc)
