@@ -103,14 +103,13 @@ class Frame:
             self.src, self.dst, *self._addrs = pkt_addrs(  # type: ignore[assignment]
                 " ".join(fields[i] for i in range(2, 5))  # frame[7:36]
             )
-        except exc.PacketInvalid as err:  # will be: InvalidAddrSetError
-            raise exc.PacketInvalid("Bad frame: Invalid address set") from err
 
-        if len(self.payload) != int(self.len_) * 2:
-            raise exc.PacketInvalid(
-                f"Bad frame: Invalid payload: "
-                f"len({self.payload}) is not int('{self.len_}' * 2))"
-            )
+        # NOTE: This check was too strict for regression logs with truncated payloads
+        # if len(self.payload) != int(self.len_) * 2:
+        #     raise exc.PacketInvalid(
+        #         f"Bad frame: Invalid payload: "
+        #         f"len({self.payload}) is not int('{self.len_}' * 2))"
+        #     )
 
         self._ctx_: bool | str = None  # type: ignore[assignment]
         self._hdr_: str = None  # type: ignore[assignment]
@@ -149,10 +148,6 @@ class Frame:
         # Check payload length against length field
         # Moved to strict checking to allow truncated packets in logs (Packet.from_file)
         if len(self.payload) != int(self.len_) * 2:
-            # Match legacy error message for regression test compatibility
-            raise exc.PacketInvalid(
-                f"Bad frame: Invalid payload: len({self.payload}) is not int('{self.len_}' * 2))"
-            )
             # Match legacy error message for regression test compatibility
             raise exc.PacketInvalid(
                 f"Bad frame: Invalid payload: len({self.payload}) is not int('{self.len_}' * 2))"
