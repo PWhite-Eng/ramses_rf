@@ -615,13 +615,22 @@ DEV_TYPE_MAP = attr_dict_factory(
         DevType.DIS: {None: "switch_display"},
         # Added "37" to FAN to support valid Ventilation devices (e.g. Orcon)
         DevType.FAN: {
-            "37": "ventilator",
+            "20": "ventilator",
+            "21": "ventilator",  # CCU
+            "29": "ventilator",  # VMC
+            "32": "ventilator",  # VMC/VMD
+            "37": "ventilator",  # VMD/VMI/VMS
+            "39": "ventilator",  # Itho?
+            "99": "ventilator",  # CVE-RF (test)
             None: "ventilator",
         },  # Both Fans and HRUs
         DevType.HUM: {None: "rh_sensor"},
         DevType.PIR: {None: "presence_sensor"},
         DevType.RFS: {None: "hvac_gateway"},  # Spider
-        DevType.REM: {None: "switch"},
+        DevType.REM: {
+            "06": "switch",
+            None: "switch",
+        },
         DevType.SW2: {None: "switch_variant"},
     },
     {

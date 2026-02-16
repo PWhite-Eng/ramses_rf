@@ -7,8 +7,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Final
 
 from . import exceptions as exc
-from .const import DEV_TYPE_MAP as _DEV_TYPE_MAP, DEVICE_ID_REGEX, DevType
-from .typing import DeviceIdT
+from .const import DEV_TYPE_MAP, DEVICE_ID_REGEX
 
 if TYPE_CHECKING:
     from .typing import DeviceIdT
@@ -18,24 +17,16 @@ if TYPE_CHECKING:
 # Block specific Device IDs known to be "Time Travellers" or Test Equipment
 # in the regression suite. These emit valid packets but with future timestamps
 # (e.g. 2024, 2026) that cause the Gateway clock to jump, expiring all real data.
-EXCLUDE_DEVICE_IDS: Final[set[str]] = {
-    "00:000001",  # Test device (2026 timestamp)
-    "03:201565",  # Future data (2024)
-    "10:033995",  # Future data (2024)
-    "10:048456",  # Future data (2024)
-}
+EXCLUDE_DEVICE_IDS: Final[set[str]] = set()
+# EXCLUDE_DEVICE_IDS: Final[set[str]] = {
+#     "00:000001",  # Test device (2026 timestamp)
+#     "03:201565",  # Future data (2024)
+#     "10:033995",  # Future data (2024)
+#     "10:048456",  # Future data (2024)
+# }
 # Note: "37:029632" (Manchester) is NOT blacklisted here. It is handled by
 # strict Packet validation (length mismatch) in packet.py.
 # ----------------------------------------------------------------------------
-
-
-DEVICE_LOOKUP: dict[str, str] = {
-    k: _DEV_TYPE_MAP._hex(k)
-    for k in _DEV_TYPE_MAP.SLUGS
-    if k not in (DevType.JIM, DevType.JST)
-}
-DEVICE_LOOKUP |= {"NUL": "63", "---": "--"}
-DEV_TYPE_MAP: dict[str, str] = {v: k for k, v in DEVICE_LOOKUP.items()}
 
 
 HGI_DEVICE_ID: DeviceIdT = "18:000730"  # type: ignore[assignment]
@@ -91,6 +82,7 @@ class Address:
 
     @staticmethod
     def is_valid(value: Any) -> bool:  # Union[str, Match[str], None]:
+        """Return True if the string is a valid RAMSES II device ID."""
         if not isinstance(value, str):
             return False
 
@@ -98,10 +90,16 @@ class Address:
         if value in EXCLUDE_DEVICE_IDS:
             return False
 
-        if value[:2] not in DEV_TYPE_MAP:
+        # Check for special case (NON_DEVICE_ID) or valid Regex
+        if value in (NON_DEVICE_ID, ALL_DEVICE_ID):
+            return True
+
+        if not DEVICE_ID_REGEX.ANY.match(value):
             return False
 
-        return value == NON_DEVICE_ID or DEVICE_ID_REGEX.ANY.match(value)
+        # Ensure the device type is known (in const.DEV_TYPE_MAP)
+        # We use the imported DEV_TYPE_MAP which contains ALL valid hex keys
+        return value[:2] in DEV_TYPE_MAP
 
     @classmethod
     def _friendly(cls, device_id: DeviceIdT) -> str:
@@ -112,7 +110,13 @@ class Address:
 
         _type, _tmp = device_id.split(":")
 
-        return f"{DEV_TYPE_MAP.get(_type, f'{_type:>3}')}:{_tmp}"
+        try:
+            # Use .slug() to get the master slug (e.g. 00->TRV, 29->FAN)
+            prefix = DEV_TYPE_MAP.slug(_type)
+        except KeyError:
+            prefix = f"{_type:>3}"
+
+        return f"{prefix}:{_tmp}"
 
     @classmethod
     def convert_from_hex(cls, device_hex: str, friendly_id: bool = False) -> str:
@@ -148,7 +152,18 @@ class Address:
             dev_type = device_id[:2]
 
         else:  # len(device_id) == 10, e.g. 'CTL:123456', or ' 63:262142'
-            dev_type = DEVICE_LOOKUP.get(device_id[:3], device_id[1:3])
+            # Convert Friendly-ID prefix (e.g. CTL) back to Hex (e.g. 01)
+            slug_part = device_id[:3]
+            if slug_part == "NUL":
+                dev_type = "63"
+            elif slug_part == "---":
+                dev_type = "--"
+            else:
+                try:
+                    dev_type = DEV_TYPE_MAP._hex(slug_part)
+                except KeyError:
+                    # Fallback if it was just a padded number " 01"
+                    dev_type = device_id[1:3]
 
         return f"{(int(dev_type) << 18) + int(device_id[-6:]):0>6X}"  # no preceding 0x
 
@@ -172,57 +187,18 @@ ALL_DEV_ADDR = Address(ALL_DEVICE_ID)  # 63:262142
 
 def dev_id_to_hex_id(device_id: DeviceIdT) -> str:
     """Convert (say) '01:145038' (or 'CTL:145038') to '06368E'."""
-
-    if len(device_id) == 9:  # e.g. '01:123456'
-        dev_type = device_id[:2]
-
-    elif len(device_id) == 10:  # e.g. '01:123456'
-        dev_type = DEVICE_LOOKUP.get(device_id[:3], device_id[1:3])
-
-    else:  # len(device_id) == 10, e.g. 'CTL:123456', or ' 63:262142'
-        raise ValueError(f"Invalid value: {device_id}, is not 9-10 characters long")
-
-    return f"{(int(dev_type) << 18) + int(device_id[-6:]):0>6X}"
+    return Address.convert_to_hex(device_id)
 
 
 def hex_id_to_dev_id(device_hex: str, friendly_id: bool = False) -> DeviceIdT:
     """Convert (say) '06368E' to '01:145038' (or 'CTL:145038')."""
-    if device_hex == "FFFFFE":  # aka '63:262142'
-        return "NUL:262142" if friendly_id else ALL_DEVICE_ID  # type: ignore[return-value]
-
-    if not device_hex.strip():  # aka '--:------'
-        return f"{'':10}" if friendly_id else NON_DEVICE_ID  # type: ignore[return-value]
-
-    _tmp = int(device_hex, 16)
-    dev_type = f"{(_tmp & 0xFC0000) >> 18:02d}"
-
-    if friendly_id:
-        dev_type = DEV_TYPE_MAP.get(dev_type, f"{dev_type:<3}")
-
-    return f"{dev_type}:{_tmp & 0x03FFFF:06d}"  # type: ignore[return-value]
+    return Address.convert_from_hex(device_hex, friendly_id=friendly_id)  # type: ignore[return-value]
 
 
 @lru_cache(maxsize=128)
 def is_valid_dev_id(value: str, dev_class: None | str = None) -> bool:
     """Return True if a device_id is valid."""
-
-    if not isinstance(value, str) or not DEVICE_ID_REGEX.ANY.match(value):
-        return False
-
-    if value in EXCLUDE_DEVICE_IDS:
-        return False
-
-    return not _DBG_DISABLE_DEV_HVAC or value.split(":", 1)[0] in DEV_TYPE_MAP
-
-    # if _DBG_DISABLE_DEV_HVAC and value.split(":", 1)[0] not in DEV_TYPE_MAP:
-    #     return False
-
-    # # TODO: specify device type (for HVAC)
-    # # elif dev_type is not None and dev_type != value.split(":", maxsplit=1)[0]:
-    # #     raise TypeError(f"The device type does not match '{dev_type}'")
-
-    # # assert value == hex_id_to_dev_id(dev_id_to_hex_id(value))
-    # return True
+    return Address.is_valid(value)
 
 
 @lru_cache(maxsize=256)  # there is definite benefit in caching this
