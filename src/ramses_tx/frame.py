@@ -98,7 +98,7 @@ class Frame:
         # NOTE: This check was too strict for regression logs with truncated payloads
         # if len(self.payload) != int(self.len_) * 2:
         #     raise exc.PacketInvalid(
-        #         f"Bad frame: invalid payload: "
+        #         f"Bad frame: Invalid payload: "
         #         f"len({self.payload}) is not int('{self.len_}' * 2))"
         #     )
 
@@ -133,7 +133,7 @@ class Frame:
         if len(self.payload) != int(self.len_) * 2:
             # Match legacy error message for regression test compatibility
             raise exc.PacketInvalid(
-                f"Bad frame: invalid payload: len({self.payload}) is not int('{self.len_}' * 2))"
+                f"Bad frame: Invalid payload: len({self.payload}) is not int('{self.len_}' * 2))"
             )
 
         try:  # Strict checking: helps users avoid constructing bad commands
