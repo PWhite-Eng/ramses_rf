@@ -7,7 +7,7 @@ designed to debug regressions without requiring the generation of intermediate
 JSON files or modifying the primary test suite.
 
 Functional Overview:
-    1.  **Replay:** Replays a specific packet log (`regression_packets.txt`)
+    1.  **Replay:** Replays a specific packet log (`regression_packets_sorted.txt`)
         through a virtual Gateway in memory. Internal library logging is
         suppressed to provide a clean analysis output.
     2.  **State Generation:** Serializes the resulting Gateway topology,
@@ -21,7 +21,7 @@ Functional Overview:
         original packet log to provide the relevant log lines for context.
 
 Referenced Files:
-    * **tests/fixtures/regression_packets.txt**: The source packet log.
+    * **tests/fixtures/regression_packets_sorted.txt**: The source packet log.
     * **tests/tests_rf/__snapshots__/test_regression_rf.ambr**: The 'golden'
         reference file containing the Syrupy snapshots.
 
@@ -40,7 +40,7 @@ from collections import defaultdict
 from importlib import metadata
 from pathlib import Path
 from typing import Any, Final, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from ramses_rf import Gateway
 from ramses_rf.device import DeviceHeat, DeviceHvac
@@ -48,7 +48,7 @@ from ramses_tx.const import SZ_READER_TASK
 from ramses_tx.exceptions import TransportError
 
 # --- Configuration ---
-PACKET_LOG: Final[Path] = Path("tests/fixtures/regression_packets.txt")
+PACKET_LOG: Final[Path] = Path("tests/fixtures/regression_packets_sorted.txt")
 SNAPSHOT_FILE: Final[Path] = Path(
     "tests/tests_rf/__snapshots__/test_regression_rf.ambr"
 )
@@ -61,6 +61,7 @@ def serialize_device(dev: Any) -> dict[str, Any]:
     :param dev: The device object to serialize.
     :return: A dictionary representing the device state.
     """
+    # Base attributes for all devices
     data: dict[str, Any] = {
         "id": dev.id,
         "type": type(dev).__name__,
@@ -68,7 +69,9 @@ def serialize_device(dev: Any) -> dict[str, Any]:
         "battery_low": getattr(dev, "battery_low", None),
     }
 
+    # Capture specific state for Heating devices
     if isinstance(dev, DeviceHeat):
+        # Topology
         zone = getattr(dev, "zone", None)
         tcs = getattr(dev, "tcs", None)
         data.update(
@@ -92,32 +95,82 @@ def serialize_device(dev: Any) -> dict[str, Any]:
             "window_open",
         ):
             try:
+                # getattr triggers the @property logic
                 val = getattr(dev, attr, None)
                 if val is not None:
                     data[attr] = val
-            except (AttributeError, TypeError, ValueError, Exception):
+            except AttributeError:
                 continue
+            except Exception as err:
+                data[attr] = f"<{type(err).__name__}: {err}>"
 
+        # OpenTherm Bridge (OTB) Specifics
+        if getattr(dev, "_SLUG", None) == "OTB":
+            for attr in (
+                "boiler_output_temp",
+                "boiler_return_temp",
+                "boiler_setpoint",
+                "ch_max_setpoint",
+                "ch_water_pressure",
+                "dhw_flow_rate",
+                "dhw_setpoint",
+                "dhw_temp",
+                "fault_present",
+                "flame_active",
+                "max_rel_modulation",
+                "oem_code",
+                "otc_active",
+                "outside_temp",
+                "rel_modulation_level",
+            ):
+                try:
+                    val = getattr(dev, attr, None)
+                    if val is not None:
+                        data[attr] = val
+                except AttributeError:
+                    continue
+                except Exception as err:
+                    data[attr] = f"<{type(err).__name__}: {err}>"
+
+    # Capture specific state for HVAC devices
     if isinstance(dev, DeviceHvac):
         for attr in (
             "air_quality",
+            "air_quality_base",
             "boost_timer",
+            "bypass_mode",
+            "bypass_position",
             "bypass_state",
             "co2_level",
+            "dewpoint_temp",
+            "exhaust_fan_speed",
+            "exhaust_flow",
+            "exhaust_temp",
             "fan_info",
             "fan_mode",
             "fan_rate",
+            "filter_remaining",
             "indoor_humidity",
             "indoor_temp",
             "outdoor_humidity",
             "outdoor_temp",
+            "post_heat",
+            "pre_heat",
+            "presence_detected",
+            "remaining_mins",
+            "speed_cap",
+            "supply_fan_speed",
+            "supply_flow",
+            "supply_temp",
         ):
             try:
                 val = getattr(dev, attr, None)
                 if val is not None:
                     data[attr] = val
-            except (AttributeError, TypeError, ValueError, Exception):
+            except AttributeError:
                 continue
+            except Exception as err:
+                data[attr] = f"<{type(err).__name__}: {err}>"
 
     return {k: v for k, v in sorted(data.items())}
 
@@ -137,8 +190,7 @@ async def generate_actual_state() -> dict[str, Any]:
         },
     )
 
-    mock_send = MagicMock(return_value=asyncio.Future())
-    mock_send.return_value.set_result(None)
+    mock_send = AsyncMock(return_value=None)
 
     with (
         patch.object(gwy, "async_send_cmd", mock_send),
