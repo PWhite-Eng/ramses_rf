@@ -49,6 +49,7 @@ from ramses_rf.schemas import (
     SZ_SENSOR,
 )
 from ramses_tx import Address, Command, Message, Priority
+from ramses_tx.typed_dicts import PayDictT
 
 from .schedule import InnerScheduleT, OuterScheduleT, Schedule
 
