@@ -613,7 +613,11 @@ DEV_TYPE_MAP = attr_dict_factory(
         # Ventilation devices
         DevType.CO2: {None: "co2_sensor"},
         DevType.DIS: {None: "switch_display"},
-        DevType.FAN: {None: "ventilator"},  # Both Fans and HRUs
+        # Added "37" to FAN to support valid Ventilation devices (e.g. Orcon)
+        DevType.FAN: {
+            "37": "ventilator",
+            None: "ventilator",
+        },  # Both Fans and HRUs
         DevType.HUM: {None: "rh_sensor"},
         DevType.PIR: {None: "presence_sensor"},
         DevType.RFS: {None: "hvac_gateway"},  # Spider

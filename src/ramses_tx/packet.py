@@ -68,7 +68,8 @@ class Packet(Frame):
 
         self._lifespan: bool | td = pkt_lifespan(self) or False
 
-        self._validate(strict_checking=False)
+        # Enforce strict validation to catch corrupt packets (e.g. length mismatch)
+        self._validate(strict_checking=True)
 
     def _validate(self, *, strict_checking: bool = False) -> None:
         """Validate the packet, and parse the addresses if so (will log all packets).

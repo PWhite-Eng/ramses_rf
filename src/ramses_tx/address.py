@@ -14,20 +14,18 @@ if TYPE_CHECKING:
     from .typing import DeviceIdT
 
 
-# --- REGRESSION / BLACKLIST CONFIGURATION -----------------------------------
-# Explicitly exclude specific device IDs or Types known to be invalid/test-noise
-# This prevents them from advancing the gateway clock or polluting the schema.
-
-# Block specific Device IDs (e.g. "00:000001")
-# Using a set for O(1) hash table lookup performance
+# --- REGRESSION CONFIGURATION -----------------------------------------------
+# Block specific Device IDs known to be "Time Travellers" or Test Equipment
+# in the regression suite. These emit valid packets but with future timestamps
+# (e.g. 2024, 2026) that cause the Gateway clock to jump, expiring all real data.
 EXCLUDE_DEVICE_IDS: Final[set[str]] = {
-    "00:000001",
+    "00:000001",  # Test device (2026 timestamp)
+    "03:201565",  # Future data (2024)
+    "10:033995",  # Future data (2024)
+    "10:048456",  # Future data (2024)
 }
-
-# Block entire Device Types (e.g. "99" for "99:xxxxxx")
-EXCLUDE_DEVICE_TYPES: Final[set[str]] = {
-    "99",
-}
+# Note: "37:029632" (Manchester) is NOT blacklisted here. It is handled by
+# strict Packet validation (length mismatch) in packet.py.
 # ----------------------------------------------------------------------------
 
 
@@ -93,14 +91,14 @@ class Address:
 
     @staticmethod
     def is_valid(value: Any) -> bool:  # Union[str, Match[str], None]:
-        # if value[:2] not in DEV_TYPE_MAP:
-        #     return False
-
         if not isinstance(value, str):
             return False
 
         # Check against blacklist (O(1) lookup)
-        if value in EXCLUDE_DEVICE_IDS or value[:2] in EXCLUDE_DEVICE_TYPES:
+        if value in EXCLUDE_DEVICE_IDS:
+            return False
+
+        if value[:2] not in DEV_TYPE_MAP:
             return False
 
         return value == NON_DEVICE_ID or DEVICE_ID_REGEX.ANY.match(value)
@@ -208,12 +206,10 @@ def hex_id_to_dev_id(device_hex: str, friendly_id: bool = False) -> DeviceIdT:
 def is_valid_dev_id(value: str, dev_class: None | str = None) -> bool:
     """Return True if a device_id is valid."""
 
-    # This method is purely for regex/structural validation,
-    # but we hook the blacklist here to ensure consistency everywhere.
     if not isinstance(value, str) or not DEVICE_ID_REGEX.ANY.match(value):
         return False
 
-    if value in EXCLUDE_DEVICE_IDS or value[:3] == "99:":
+    if value in EXCLUDE_DEVICE_IDS:
         return False
 
     return not _DBG_DISABLE_DEV_HVAC or value.split(":", 1)[0] in DEV_TYPE_MAP
