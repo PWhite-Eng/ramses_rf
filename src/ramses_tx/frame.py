@@ -73,7 +73,7 @@ class Frame:
         fields = frame.lstrip().split(" ")
 
         if not COMMAND_REGEX.match(self._frame):
-            raise exc.PacketInvalid(f"Bad frame: invalid structure: >>>{frame}<<<")
+            raise exc.PacketInvalid(f"Bad frame: Invalid structure: >>>{frame}<<<")
 
         self.verb: VerbT = frame[:2]  # type: ignore[assignment]
         self.seqn: str = fields[1]  # . frame[3:6]
