@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any, Never, TypeVar
+from typing import Any, Final, Never, TypeVar
 
 import voluptuous as vol
 
@@ -21,7 +21,6 @@ from .const import (
     SZ_BOUND_TO,
     SZ_CLASS,
     SZ_DSRDTR,
-    SZ_ENFORCE_KNOWN_LIST,
     SZ_FAKED,
     SZ_FILE_NAME,
     SZ_INBOUND as SZ_INBOUND,
