@@ -147,7 +147,7 @@ class Gateway(Engine):
             _LOGGER.setLevel(logging.DEBUG)
 
         kwargs = {k: v for k, v in kwargs.items() if k[:1] != "_"}  # anachronism
-        config = kwargs.pop(SZ_CONFIG, {})
+        config = kwargs.pop(SZ_CONFIG, config) or {}
 
         # Merge configs for Engine
         engine_config = SCH_ENGINE_CONFIG(config)
@@ -156,6 +156,18 @@ class Gateway(Engine):
         # We pass both sets of config to Engine.
         # Engine's GatewayConfig.from_kwargs will handle them if definitions match.
         combined_config = {**engine_config, **gateway_config}
+
+        # Handle enable_eavesdrop: prefer explicit arg, fallback to config
+        if SZ_ENABLE_EAVESDROP in combined_config:
+            if not enable_eavesdrop:
+                enable_eavesdrop = combined_config[SZ_ENABLE_EAVESDROP]
+            combined_config.pop(SZ_ENABLE_EAVESDROP)
+
+        # Handle reduce_processing: prefer explicit arg, fallback to config
+        if "reduce_processing" in combined_config:
+            if not reduce_processing:
+                reduce_processing = combined_config["reduce_processing"]
+            combined_config.pop("reduce_processing")
 
         super().__init__(
             port_name,
@@ -169,13 +181,15 @@ class Gateway(Engine):
             port_config=port_config,
             hgi_id=hgi_id,
             transport_constructor=transport_constructor,
+            enable_eavesdrop=enable_eavesdrop,
+            reduce_processing=reduce_processing,
             **combined_config,
         )
 
         if self._disable_sending:
             self.config = replace(self.config, disable_discovery=True)
 
-        if config.get(SZ_ENABLE_EAVESDROP):
+        if enable_eavesdrop:
             _LOGGER.warning(
                 f"{SZ_ENABLE_EAVESDROP}=True: this is strongly discouraged"
                 " for routine use (there be dragons here)"
@@ -223,6 +237,14 @@ class Gateway(Engine):
         if device_id := self._transport.get_extra_info(SZ_ACTIVE_HGI):
             return self.device_by_id.get(device_id)  # type: ignore[return-value]
         return None
+
+    @property
+    def _enable_eavesdrop(self) -> bool:
+        return self.config.enable_eavesdrop
+
+    @property
+    def _reduce_processing(self) -> int:
+        return self.config.reduce_processing
 
     async def start(
         self,
@@ -352,7 +374,6 @@ class Gateway(Engine):
         :returns: A tuple of arguments saved during the pause.
         :rtype: tuple[Any]
         """
-        args: tuple[Any, ...]
         args: tuple[Any, ...]
 
         _LOGGER.debug("Gateway: Resuming engine...")
