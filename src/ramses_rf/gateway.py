@@ -12,6 +12,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from datetime import datetime as dt
 from logging.handlers import QueueListener
 from typing import TYPE_CHECKING, Any
 
@@ -43,27 +44,6 @@ from ramses_tx.const import (
     SZ_KNOWN_LIST,
 )
 from ramses_tx.typing import PktLogConfigT, PortConfigT
-from ramses_tx.typing import PktLogConfigT, PortConfigT
-
-from .const import DONT_CREATE_MESSAGES, SZ_DEVICES, SZ_READER_TASK
-from .database import MessageIndex
-from .device import DeviceHeat, DeviceHvac, Fakeable, HgiGateway, device_factory
-from .dispatcher import detect_array_fragment, process_msg
-from .schemas import (
-    DEFAULT_MAX_ZONES,
-    SCH_GLOBAL_SCHEMAS,
-    SCH_TRAITS,
-    SZ_ALIAS,
-    SZ_CLASS,
-    SZ_CONFIG,
-    SZ_ENABLE_EAVESDROP,
-    SZ_FAKED,
-    SZ_MAIN_TCS,
-    SZ_MAX_ZONES,
-    SZ_ORPHANS,
-    load_schema,
-)
-from .system import Evohome
 
 from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
     I_,
@@ -72,9 +52,27 @@ from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
     W_,
     Code,
 )
+from .const import DONT_CREATE_MESSAGES, SZ_DEVICES, SZ_READER_TASK
+from .database import MessageIndex
+from .device import DeviceHeat, DeviceHvac, Fakeable, HgiGateway, device_factory
+from .dispatcher import detect_array_fragment, process_msg
+from .schemas import (
+    DEFAULT_MAX_ZONES,
+    SCH_GATEWAY_CONFIG,
+    SCH_GLOBAL_SCHEMAS,
+    SCH_TRAITS,
+    SZ_ALIAS,
+    SZ_CLASS,
+    SZ_CONFIG,
+    SZ_ENABLE_EAVESDROP,
+    SZ_FAKED,
+    SZ_MAIN_TCS,
+    SZ_ORPHANS,
+    load_schema,
+)
+from .system import Evohome
 
 if TYPE_CHECKING:
-    from ramses_tx import DeviceIdT, DeviceListT, RamsesTransport
     from ramses_tx import DeviceIdT, DeviceListT, RamsesTransport
 
     from .device import Device
@@ -108,18 +106,19 @@ class Gateway(Engine):
         enforce_known_list: bool = False,
         block_list: DeviceListT | None = None,
         known_list: DeviceListT | None = None,
+        # Infra
         loop: asyncio.AbstractEventLoop | None = None,
         transport_constructor: Callable[..., Awaitable[RamsesTransport]] | None = None,
         hgi_id: str | None = None,
         sqlite_index: bool = False,
         log_all_mqtt: bool = False,
-        # Infra
-        loop: asyncio.AbstractEventLoop | None = None,
-        transport_constructor: Callable[..., Awaitable[RamsesTransport]] | None = None,
+        # Configs
+        packet_log: PktLogConfigT | None = None,
+        port_config: PortConfigT | None = None,
         # Legacy
         config: dict[str, Any] | None = None,
         # Transport
-        **transport_kwargs: Any,
+        **kwargs: Any,
     ) -> None:
         """Initialize the Gateway instance.
 
@@ -148,7 +147,7 @@ class Gateway(Engine):
             _LOGGER.setLevel(logging.DEBUG)
 
         kwargs = {k: v for k, v in kwargs.items() if k[:1] != "_"}  # anachronism
-        config: dict[str, Any] = kwargs.pop(SZ_CONFIG, {})
+        config = kwargs.pop(SZ_CONFIG, {})
 
         # Merge configs for Engine
         engine_config = SCH_ENGINE_CONFIG(config)
