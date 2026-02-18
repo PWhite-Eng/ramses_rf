@@ -2,7 +2,6 @@
 """RAMSES RF - Test eavesdropping of device class."""
 
 import asyncio
-import contextlib
 import json
 from dataclasses import replace
 from pathlib import Path, PurePath
@@ -10,9 +9,7 @@ from pathlib import Path, PurePath
 import pytest
 
 from ramses_rf import Gateway
-from ramses_tx import exceptions as exc
 from ramses_tx.message import Message
-from ramses_tx.packet import Packet
 
 from .helpers import TEST_DIR, assert_expected
 
@@ -27,7 +24,7 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     metafunc.parametrize("dir_name", folders, ids=id_fnc)
 
 
-def test_packets_from_log_file(dir_name: Path) -> None:
+async def test_packets_from_log_file(dir_name: Path) -> None:
     """Check if all packets are parsed correctly."""
 
     def proc_log_line(msg: Message) -> None:
