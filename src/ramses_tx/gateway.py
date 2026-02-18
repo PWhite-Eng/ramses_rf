@@ -13,7 +13,6 @@ import logging
 from collections.abc import Callable
 from datetime import datetime as dt
 from typing import TYPE_CHECKING, Any
-from typing import TYPE_CHECKING, Any
 
 from .address import ALL_DEV_ADDR, HGI_DEV_ADDR, NON_DEV_ADDR
 from .command import Command
@@ -120,7 +119,7 @@ class Engine:
 
         self._hgi_id = self.config.hgi_id
         if self._hgi_id:
-            self._transport_kwargs[SZ_ACTIVE_HGI] = self._hgi_id
+            self._kwargs[SZ_ACTIVE_HGI] = self._hgi_id
 
         self._engine_lock = asyncio.Lock()
         self._engine_state: (
