@@ -89,12 +89,6 @@ class Frame:
         else:
             self.payload = ""
 
-        # Safely extract payload (handle missing field for empty payloads)
-        if len(fields) > 7:
-            self.payload: PayloadT = fields[7]  # frame[46:].split(" ")[0]
-        else:
-            self.payload = ""
-
         self._len: int = int(len(self.payload) / 2)
 
         # Allow invalid address sets in __init__ for robustness (logs often contain bad packets)
