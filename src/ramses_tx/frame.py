@@ -70,6 +70,9 @@ class Frame:
         """
 
         self._frame: str = frame
+        if not COMMAND_REGEX.match(self._frame):
+            raise exc.PacketInvalid(f"Bad frame: Invalid structure: >>>{frame}<<<")
+
         fields = frame.lstrip().split(" ")
 
         if not COMMAND_REGEX.match(self._frame):
@@ -94,13 +97,14 @@ class Frame:
             self.src, self.dst, *self._addrs = pkt_addrs(  # type: ignore[assignment]
                 " ".join(fields[i] for i in range(2, 5))  # frame[7:36]
             )
+        except exc.PacketInvalid as err:  # will be: InvalidAddrSetError
+            raise exc.PacketInvalid("Bad frame: Invalid address set") from err
 
-        # NOTE: This check was too strict for regression logs with truncated payloads
-        # if len(self.payload) != int(self.len_) * 2:
-        #     raise exc.PacketInvalid(
-        #         f"Bad frame: Invalid payload: "
-        #         f"len({self.payload}) is not int('{self.len_}' * 2))"
-        #     )
+        if len(self.payload) != int(self.len_) * 2:
+            raise exc.PacketInvalid(
+                f"Bad frame: Invalid payload: "
+                f"len({self.payload}) is not int('{self.len_}' * 2))"
+            )
 
         self._ctx_: bool | str = None  # type: ignore[assignment]
         self._hdr_: str = None  # type: ignore[assignment]
