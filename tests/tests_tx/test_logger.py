@@ -37,7 +37,11 @@ async def test_logging_lifecycle(tmp_path: Path) -> None:
     gwy = Gateway(
         None,
         input_file=str(input_file),
-        packet_log={"file_name": str(log_file)},
+        packet_log={
+            "file_name": str(log_file),
+            "rotate_backups": 0,
+            "rotate_bytes": None,
+        },
     )
     await gwy.start()
 
