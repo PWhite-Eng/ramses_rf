@@ -721,10 +721,8 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
 
         # always send at least one of RQ|3EF0 or RQ|3220|00 (status)
         if use_native_ot != "never":
-        if use_native_ot != "never":
             self._add_discovery_cmd(Command.get_opentherm_data(self.id, MsgId._00), 60)
 
-        if use_native_ot != "always":
         if use_native_ot != "always":
             self._add_discovery_cmd(
                 Command.from_attrs(RQ, self.id, Code._3EF0, "00"), 60
@@ -735,18 +733,15 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
 
         for data_id in SCHEMA_DATA_IDS:  # From OT v2.2: version numbers
             if cmd := which_cmd(use_native_ot, _to_msg_id(data_id)):
-            if cmd := which_cmd(use_native_ot, _to_msg_id(data_id)):
                 self._add_discovery_cmd(cmd, 6 * 3600, delay=180)
 
         for data_id in PARAMS_DATA_IDS:  # params or L/T state
-            if cmd := which_cmd(use_native_ot, _to_msg_id(data_id)):
             if cmd := which_cmd(use_native_ot, _to_msg_id(data_id)):
                 self._add_discovery_cmd(cmd, 3600, delay=90)
 
         for data_id in STATUS_DATA_IDS:  # except "00", see above
             if data_id == 0x00:
                 continue
-            if cmd := which_cmd(use_native_ot, _to_msg_id(data_id)):
             if cmd := which_cmd(use_native_ot, _to_msg_id(data_id)):
                 self._add_discovery_cmd(cmd, 300, delay=15)
 
@@ -859,15 +854,12 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
         use_native_ot = cast(str, self._gwy.config.use_native_ot)
 
         if use_native_ot == "always":
-        if use_native_ot == "always":
             return cbk_ot() if cbk_ot else None
-        if use_native_ot == "prefer":
         if use_native_ot == "prefer":
             if cbk_ot and (result := cbk_ot()) is not None:
                 return result
 
         result_ramses = cbk_ramses() if cbk_ramses is not None else None
-        if use_native_ot == "avoid" and result_ramses is None:
         if use_native_ot == "avoid" and result_ramses is None:
             return cbk_ot() if cbk_ot else None
         return result_ramses  # incl. use_native_ot == "never"
@@ -885,16 +877,13 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
         use_native_ot = cast(str, self._gwy.config.use_native_ot)
 
         if use_native_ot == "always":
-        if use_native_ot == "always":
             return self._ot_msg_value(self.RAMSES_TO_OT[code])
 
-        if use_native_ot == "prefer":
         if use_native_ot == "prefer":
             if (result_ot := self._ot_msg_value(self.RAMSES_TO_OT[code])) is not None:
                 return result_ot
 
         result_ramses = self._msg_value(code, key=key)
-        if use_native_ot == "avoid" and result_ramses is None:
         if use_native_ot == "avoid" and result_ramses is None:
             return self._ot_msg_value(self.RAMSES_TO_OT[code])
 
@@ -908,16 +897,13 @@ class OtbGateway(Actuator, HeatDemand):  # OTB (10): 3220 (22D9, others)
         use_native_ot = cast(str, self._gwy.config.use_native_ot)
 
         if use_native_ot == "always":
-        if use_native_ot == "always":
             return result_ot
 
-        if use_native_ot == "prefer":
         if use_native_ot == "prefer":
             if result_ot is not None:
                 return result_ot
 
         #
-        elif use_native_ot == "avoid" and result_ramses is None:
         elif use_native_ot == "avoid" and result_ramses is None:
             return result_ot
 
