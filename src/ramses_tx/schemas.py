@@ -78,6 +78,9 @@ def sch_packet_log_dict_factory(
                 None, int
             ),
             vol.Optional(SZ_ROTATE_BYTES): vol.Any(None, int),
+            vol.Optional("buffer_capacity"): int,
+            vol.Optional("flush_interval"): vol.Any(float, int),
+            vol.Optional("flush_level"): int,
         },
         extra=vol.PREVENT_EXTRA,
     )
