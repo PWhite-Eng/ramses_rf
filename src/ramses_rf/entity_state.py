@@ -90,6 +90,77 @@ class EntityState:
         """Initialize the EntityState."""
         self._entity = entity
         self._gwy = gwy
+        # NEW: Context-Aware O(1) Dictionary for Push-Model state caching
+        self._current_state: dict[tuple[Code, VerbT, Any], ApplicationMessage] = {}
+        self._log_cursor: int = 0  # Tracks cursor position in global log
+
+    def _sync_state(self) -> None:
+        """Hybrid Push Model: Sync O(1) cache using a cursor on the global log."""
+        if self._gwy.message_store is None:
+            return
+
+        log_iterable = self._gwy.message_store.log_by_dtm
+        if isinstance(log_iterable, dict):
+            log_iterable = list(log_iterable.values())
+
+        current_len = len(log_iterable)
+        if current_len == self._log_cursor:
+            return  # No new packets, O(1) instant exit
+
+        if current_len < self._log_cursor:
+            # The global log was cleared (e.g. cache reset). Rebuild from scratch.
+            self._log_cursor = 0
+            self._current_state.clear()
+
+        # Only process NEW packets appended since the last sync
+        new_msgs = log_iterable[self._log_cursor :]
+        for msg in new_msgs:
+            self.update_state(msg)
+
+        self._log_cursor = current_len
+
+    def update_state(self, msg: ApplicationMessage) -> None:
+        """Push model: Instantly cache relevant messages upon arrival."""
+        if not self._is_relevant_msg(msg):
+            return
+
+        entity_id = self._entity.id
+        is_dhw = entity_id[_ID_SLICE:] == "_HW"
+        is_zone = len(entity_id) > 9 and not is_dhw
+        ctx = getattr(msg._pkt, "_ctx", None)
+
+        if is_zone:
+            zone_idx = entity_id[_ID_SLICE + 1 :]
+            in_dict = isinstance(msg.payload, dict)
+            in_list = isinstance(msg.payload, list)
+            if not (
+                ctx == zone_idx
+                or (in_dict and str(msg.payload.get(SZ_ZONE_IDX)) == zone_idx)
+                or (
+                    in_list
+                    and any(
+                        isinstance(d, dict) and str(d.get(SZ_ZONE_IDX)) == zone_idx
+                        for d in msg.payload
+                    )
+                )
+            ):
+                return  # Payload does not belong to this specific zone
+
+        if is_dhw:
+            in_dict = isinstance(msg.payload, dict)
+            in_list = isinstance(msg.payload, list)
+            if not (
+                ctx in ("FC", "FA", "F9", "FA")
+                or (in_dict and "dhw_idx" in msg.payload)
+                or (
+                    in_list
+                    and any(isinstance(d, dict) and "dhw_idx" in d for d in msg.payload)
+                )
+            ):
+                return  # Payload does not belong to DHW
+
+        # Context-aware O(1) Overwrite guarantees multi-zone devices don't conflict
+        self._current_state[(msg.code, msg.verb, ctx)] = msg
 
     def _is_relevant_msg(self, msg: ApplicationMessage) -> bool:
         """Check if a central MessageStore packet is relevant to this entity."""
@@ -191,6 +262,8 @@ class EntityState:
             f"Unsupported: using a tuple ({code}) with a verb ({verb})"
         )
 
+        self._sync_state()
+
         if verb:
             if verb == VerbT("RQ"):
                 assert not isinstance(code, tuple), (
@@ -199,13 +272,33 @@ class EntityState:
                 key = None
             try:
                 cd = await self.find_latest_code(code, key, **kwargs, verb=verb)
-                msg = (await self.get_message_log_flat()).get(cd) if cd else None
+                if cd:
+                    cache = await self._build_state_cache()
+
+                    # Retrieve the exact context-aware message
+                    entity_id = self._entity.id
+                    is_dhw = entity_id[_ID_SLICE:] == "_HW"
+                    is_zone = len(entity_id) > 9 and not is_dhw
+                    ctx = kwargs.get(
+                        "zone_idx", entity_id[_ID_SLICE + 1 :] if is_zone else None
+                    )
+                    if not ctx and is_dhw:
+                        ctx = kwargs.get("dhw_idx", "HW")
+
+                    msg = cache.get_message(cd, verb, ctx)
+                    if msg is None:
+                        # Fallbacks for base devices
+                        msg = cache.get_message(cd, verb, False)
+                    if msg is None:
+                        msg = cache.get_message(cd, verb, None)
+                else:
+                    msg = None
             except KeyError:
                 msg = None
         elif isinstance(code, tuple):
             msgs_dict = await self.get_message_log_flat()
             msgs_list = [m for m in msgs_dict.values() if m.code in code]
-            msg = max(msgs_list) if msgs_list else None
+            msg = max(msgs_list, key=lambda m: m.dtm) if msgs_list else None
         else:
             msgs_dict = await self.get_message_log_flat()
             msg = msgs_dict.get(code)
@@ -226,8 +319,10 @@ class EntityState:
             loop = getattr(self._gwy, "_loop", asyncio.get_running_loop())
             loop.create_task(self._delete_msg(msg))
 
+        payload = msg.payload
+
         if msg.code == Code._1FC9:
-            return [x[1] for x in msg.payload]
+            return [x[1] for x in payload]
 
         idx: str | None = None
         val: str | None = None
@@ -237,22 +332,22 @@ class EntityState:
         elif zone_idx:
             idx, val = SZ_ZONE_IDX, zone_idx
 
-        if isinstance(msg.payload, dict):
-            msg_dict = msg.payload
+        if isinstance(payload, dict):
+            msg_dict = payload
             if idx and idx != SZ_DOMAIN_ID and msg_dict.get(idx) != val:
                 return None
         elif idx:
             msg_dict = {
-                k: v for d in msg.payload for k, v in d.items() if d.get(idx) == val
+                k: v for d in payload for k, v in d.items() if d.get(idx) == val
             }
             if not msg_dict:
                 return None
         else:
-            if not msg.payload:
+            if not payload:
                 return None
-            if isinstance(msg.payload, list) and (key == "*" or not key):
-                return msg.payload
-            msg_dict = msg.payload[0]
+            if isinstance(payload, list) and (key == "*" or not key):
+                return payload
+            msg_dict = payload[0]
 
         if key == "*" or not key:
             return {
@@ -403,6 +498,7 @@ class EntityState:
 
     async def get_message_log_flat(self) -> dict[Code, ApplicationMessage]:
         """Dynamically build a flat dict of all I/RP messages logged for this entity."""
+        self._sync_state()
         _msg_dict: dict[Code, ApplicationMessage] = {}
 
         # Build from _build_state_cache to guarantee strict zone_idx isolation
@@ -418,60 +514,12 @@ class EntityState:
 
     async def _build_state_cache(self) -> StateCache:
         """Dynamically build a flat cache of all messages for this entity."""
+        self._sync_state()
         cache = StateCache()
 
-        if self._gwy.message_store is None:
-            return cache
-
-        entity_id = self._entity.id
-        is_dhw = entity_id[_ID_SLICE:] == "_HW"
-        is_zone = len(entity_id) > 9 and not is_dhw
-        zone_idx = entity_id[_ID_SLICE + 1 :] if is_zone else None
-
-        # Handle both list and dict based message logs gracefully
-        log_iterable = self._gwy.message_store.log_by_dtm
-        if isinstance(log_iterable, dict):
-            log_iterable = log_iterable.values()
-
-        for msg in log_iterable:
-            if not self._is_relevant_msg(msg):
-                continue
-
-            code = msg.code
-            verb = msg.verb
-            ctx = msg._pkt._ctx
-
-            if is_dhw:
-                in_dict = isinstance(msg.payload, dict)
-                in_list = isinstance(msg.payload, list)
-                if (
-                    ctx in ("FC", "FA", "F9", "FA")
-                    or (in_dict and "dhw_idx" in msg.payload)
-                    or (
-                        in_list
-                        and any(
-                            isinstance(d, dict) and "dhw_idx" in d for d in msg.payload
-                        )
-                    )
-                ):
-                    cache.add(code, verb, ctx, msg)
-            elif is_zone:
-                in_dict = isinstance(msg.payload, dict)
-                in_list = isinstance(msg.payload, list)
-                if (
-                    ctx == zone_idx
-                    or (in_dict and str(msg.payload.get("zone_idx")) == zone_idx)
-                    or (
-                        in_list
-                        and any(
-                            isinstance(d, dict) and str(d.get("zone_idx")) == zone_idx
-                            for d in msg.payload
-                        )
-                    )
-                ):
-                    cache.add(code, verb, ctx, msg)
-            else:
-                cache.add(code, verb, ctx, msg)
+        # Extremely fast O(1) iteration, bypassing global history!
+        for (code, verb, ctx), msg in self._current_state.items():
+            cache.add(code, verb, ctx, msg)
 
         return cache
 

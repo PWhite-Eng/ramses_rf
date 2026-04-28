@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime as dt
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -46,86 +46,64 @@ def zone_entity() -> EntityState:
     mock_gwy.message_store = MagicMock()
     mock_gwy.message_store.log_by_dtm = []
 
-    return EntityState(mock_dev, mock_gwy)
+    # Inject our new O(1) state dictionary
+    entity = EntityState(mock_dev, mock_gwy)
+    entity._current_state = {}
+    return entity
 
 
 @pytest.mark.asyncio
-async def test_step1_relevance_check_passes(zone_entity: EntityState) -> None:
-    """Step 1: Does the message pass the initial L4 routing check?"""
-    # Create a message from the correct parent device (04:123456)
-    msg = DummyMsg("04:123456", Code._30C9, {"temperature": 21.0})
-
-    # The L4 check just looks at the first 9 chars of the ID. It should pass.
-    assert zone_entity._is_relevant_msg(msg) is True
-
-
-@pytest.mark.asyncio
-async def test_step2_cache_drops_invalid_zone_payload(
-    zone_entity: EntityState,
-) -> None:
-    """Step 2: Why did our previous test return None?"""
-    # Payload lacks 'zone_idx', so the Zone cache builder should reject it
-    msg = DummyMsg("04:123456", Code._30C9, {"temperature": 21.0})
-    zone_entity._gwy.message_store.log_by_dtm = [msg]
-
-    cache = await zone_entity._build_state_cache()
-
-    # Assert the cache is empty because the payload didn't match the zone
-    assert len(cache.get_all()) == 0
-    # The payload property is accessed exactly 3 times in the zone check logic
-    assert msg.payload_access_count == 3
-
-
-@pytest.mark.asyncio
-async def test_step3_cache_keeps_valid_zone_payload(
-    zone_entity: EntityState,
-) -> None:
-    """Step 3: What happens when the payload is correctly formatted?"""
-    # We add "zone_idx": "00" to match our mock_dev.id
+async def test_o1_push_model_ingest(zone_entity: EntityState) -> None:
+    """Step 1: Verify the O(1) push model correctly caches on ingest."""
     msg = DummyMsg(
         "04:123456",
         Code._30C9,
         {"temperature": 21.0, "zone_idx": "00"},
     )
-    zone_entity._gwy.message_store.log_by_dtm = [msg]
 
-    cache = await zone_entity._build_state_cache()
+    # Action: Simulate the Dispatcher pushing a newly arrived packet
+    zone_entity.update_state(msg)
 
-    # The cache should now successfully store the message
-    assert len(cache.get_all()) == 1
-    assert msg.payload_access_count == 3
+    # Assert: The dictionary holds the message under the new context-aware tuple
+    expected_key = (Code._30C9, I_, False)
+    assert expected_key in zone_entity._current_state
+    assert zone_entity._current_state[expected_key] == msg
 
 
 @pytest.mark.asyncio
-async def test_step4_get_value_causes_full_store_iteration(
+async def test_o1_get_value_eliminates_cpu_thrashing(
     zone_entity: EntityState,
 ) -> None:
-    """Step 4: Proving the O(N^2) CPU bug with correct payload data."""
+    """Step 2: Proving the O(N^2) CPU bug is eradicated."""
     packet_count = 5000
 
-    # Create an artificially large global log
-    mock_log = [
-        DummyMsg(
+    # Simulate a system that has ingested 5000 packets over time
+    for _ in range(packet_count - 1):
+        noise_msg = DummyMsg(
             "04:123456",
             Code._30C9,
-            {"temperature": 21.0, "zone_idx": "00"},
+            {"temperature": 19.0, "zone_idx": "00"},
         )
-        for _ in range(packet_count)
-    ]
-    zone_entity._gwy.message_store.log_by_dtm = mock_log
+        zone_entity.update_state(noise_msg)
 
-    with patch.object(
-        zone_entity, "_is_relevant_msg", wraps=zone_entity._is_relevant_msg
-    ) as spy_is_relevant:
-        # Action: Query the state
-        result = await zone_entity.get_value(Code._30C9)
+    # Ingest the final, most recent message
+    final_msg = DummyMsg(
+        "04:123456",
+        Code._30C9,
+        {"temperature": 21.0, "zone_idx": "00"},
+    )
+    zone_entity.update_state(final_msg)
 
-        # Note: _msg_value_msg strips 'zone_idx' out before returning to HA
-        assert result == {"temperature": 21.0}
+    # Reset the access counter so we only measure the cost of the QUERY
+    final_msg.payload_access_count = 0
 
-        # Assert 1: The system evaluated EVERY packet in the global history
-        assert spy_is_relevant.call_count == packet_count
+    # Action: Query the state
+    result = await zone_entity.get_value(Code._30C9)
 
-        # Assert 2: The system evaluated the payload >=3x on EVERY relevant packet
-        for msg in mock_log:
-            assert msg.payload_access_count >= 3
+    assert result == {"temperature": 21.0}
+
+    # ASSERT THE BUG IS FIXED:
+    # Instead of iterating 5000 times and accessing the payload 15,000 times,
+    # the dictionary lookup ensures the payload is accessed strictly ONCE
+    # (just to extract the final value to return to Home Assistant).
+    assert final_msg.payload_access_count == 1
