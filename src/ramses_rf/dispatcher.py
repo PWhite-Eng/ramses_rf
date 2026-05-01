@@ -11,7 +11,7 @@ import logging
 from datetime import timedelta as td
 from typing import TYPE_CHECKING, Final
 
-from ramses_tx import ALL_DEV_ADDR, CODES_BY_DEV_SLUG, Message
+from ramses_tx import ALL_DEV_ADDR, CODES_BY_DEV_SLUG
 from ramses_tx.ramses import (
     CODES_OF_HEAT_DOMAIN,
     CODES_OF_HEAT_DOMAIN_ONLY,
@@ -34,6 +34,7 @@ from .const import (
     DevType,
 )
 from .device import Device, Fakeable
+from .message import Message
 
 if TYPE_CHECKING:
     from .gateway import Gateway

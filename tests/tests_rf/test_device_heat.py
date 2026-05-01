@@ -18,7 +18,8 @@ from ramses_rf.device.heat import (
     TrvActuator,
 )
 from ramses_rf.exceptions import DeviceNotFaked
-from ramses_tx import Code, Message, Priority
+from ramses_rf.message import Message
+from ramses_tx import Code, Priority
 from ramses_tx.address import Address
 from ramses_tx.const import I_, RP, SZ_TEMPERATURE, MsgId
 from ramses_tx.opentherm import SZ_MSG_ID, SZ_MSG_NAME, SZ_MSG_TYPE, SZ_VALUE, OtMsgType

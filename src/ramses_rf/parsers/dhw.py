@@ -20,7 +20,7 @@ from ramses_tx.typing import PayDictT
 from .registry import register_parser
 
 if TYPE_CHECKING:
-    from ramses_tx.message import Message
+    from ramses_rf.message import Message
 
 
 # dhw (cylinder) params  # FIXME: a bit messy

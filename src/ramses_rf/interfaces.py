@@ -2,8 +2,9 @@
 
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ramses_tx import Command, Message, Packet, Priority, QosParams
+from ramses_tx import Command, Packet, Priority, QosParams
 
+from .message import Message
 from .typing import DeviceIdT, DeviceListT
 
 if TYPE_CHECKING:

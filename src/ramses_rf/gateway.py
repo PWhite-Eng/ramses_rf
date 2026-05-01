@@ -9,26 +9,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime as dt, timedelta as td
+from datetime import UTC, datetime as dt, timedelta as td
 from logging.handlers import QueueListener
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-import ramses_tx.message as tx_msg
-from ramses_rf.parsers import PayloadDecoderPipeline
 from ramses_tx import (
     Command,
     Engine,
-    Message,
     Packet,
-    Priority,
     extract_known_hgi_id,
     protocol_factory,
     set_pkt_logging_config,
 )
-from ramses_tx.application_message import ApplicationMessage
 from ramses_tx.config import EngineConfig
 from ramses_tx.const import (
     DEFAULT_GAP_DURATION,
@@ -37,13 +33,18 @@ from ramses_tx.const import (
     DEFAULT_SEND_TIMEOUT,
     DEFAULT_WAIT_FOR_REPLY,
     SZ_ACTIVE_HGI,
+    Priority,
 )
+from ramses_tx.dtos import PacketDTO
+from ramses_tx.exceptions import ProtocolSendFailed
 from ramses_tx.logger import flush_packet_log
 from ramses_tx.ramses import CODES_SCHEMA
 from ramses_tx.schemas import SZ_BLOCK_LIST, SZ_ENFORCE_KNOWN_LIST, SZ_KNOWN_LIST
+from ramses_tx.typing import PayloadT
 
+from . import message as rf_msg
+from .application_message import ApplicationMessage
 from .const import DONT_CREATE_MESSAGES, HIGH_VOLUME_STATUS_CODES
-from .typing import DeviceIdT
 
 from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
     I_,
@@ -51,6 +52,7 @@ from .const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
     RQ,
     W_,
     Code,
+    VerbT,
 )
 from .device import HgiGateway
 from .device_filter import DeviceFilter
@@ -62,6 +64,7 @@ from .interfaces import (
     GatewayInterface,
     MessageStoreInterface,
 )
+from .message import Message
 from .message_store import MessageStore
 from .schemas import (
     SCH_GLOBAL_SCHEMAS,
@@ -72,7 +75,7 @@ from .schemas import (
     load_schema,
 )
 from .system import Evohome
-from .typing import DeviceListT
+from .typing import DeviceIdT, DeviceListT
 
 if TYPE_CHECKING:
     from ramses_tx import RamsesTransportT
@@ -86,11 +89,14 @@ _LOGGER = logging.getLogger(__name__)
 class GatewayConfig:
     """Configuration parameters for the Ramses Gateway.
 
-    :param disable_discovery: Disable device discovery, defaults to False.
+    :param disable_discovery: Disable device discovery, defaults to
+        False.
     :type disable_discovery: bool
-    :param enable_eavesdrop: Enable eavesdropping mode, defaults to False.
+    :param enable_eavesdrop: Enable eavesdropping mode, defaults to
+        False.
     :type enable_eavesdrop: bool
-    :param reduce_processing: Level of reduced processing, defaults to 0.
+    :param reduce_processing: Level of reduced processing, defaults to
+        0.
     :type reduce_processing: int
     :param max_zones: Maximum number of zones allowed, defaults to 12.
     :type max_zones: int
@@ -99,7 +105,8 @@ class GatewayConfig:
     :param enforce_strict_handling: Enforce strict handling of packets.
     :type enforce_strict_handling: bool
     :param use_native_ot: Preference for using native OpenTherm.
-    :type use_native_ot: Literal["always", "prefer", "avoid", "never"] | None
+    :type use_native_ot: Literal["always", "prefer", "avoid",
+        "never"] | None
     :param schema: Dictionary representing the schema.
     :type schema: dict[str, Any]
     :param debug_mode: If True, set the logger to debug mode.
@@ -215,8 +222,8 @@ class Gateway(GatewayInterface):
 
         if self._gwy_config.enable_eavesdrop:
             _LOGGER.warning(
-                f"{SZ_ENABLE_EAVESDROP}=True: this is strongly discouraged"
-                " for routine use (there be dragons here)"
+                f"{SZ_ENABLE_EAVESDROP}=True: this is strongly discouraged "
+                "for routine use (there be dragons here)"
             )
 
         self._schema: dict[str, Any] = SCH_GLOBAL_SCHEMAS(self._gwy_config.schema or {})
@@ -236,18 +243,24 @@ class Gateway(GatewayInterface):
         self._message_store: MessageStoreInterface | None = None
         self._pkt_log_listener: QueueListener | None = None
 
+        self._prev_msg: ApplicationMessage | None = None
+        self._this_msg: ApplicationMessage | None = None
+        self._history_lock = threading.Lock()
+
         # 1. Controller Knowledge Bridge
         def is_controller(device_id: str) -> bool:
             """Provide ramses_tx with domain knowledge safely.
 
             :param device_id: The string device ID (e.g., '01:145038').
             :type device_id: str
-            :returns: True if the device is a controller or unknown, False otherwise.
+            :returns: True if the device is a controller or unknown,
+                False otherwise.
             :rtype: bool
             """
             # HACK: Preserve legacy bug-compatibility for snapshot tests.
-            # ramses_tx previously assumed UFCs (02:) were controllers because
-            # its Address object lacked domain knowledge and defaulted to True.
+            # ramses_tx previously assumed UFCs (02:) were controllers
+            # because its Address object lacked domain knowledge and
+            # defaulted to True.
             if device_id.startswith("02:"):
                 return True
 
@@ -257,7 +270,7 @@ class Gateway(GatewayInterface):
                 return getattr(dev, "_is_controller", True)
             return True
 
-        tx_msg._IS_CONTROLLER_CB = is_controller
+        rf_msg._IS_CONTROLLER_CB = is_controller
 
     def __repr__(self) -> str:
         """Return a string representation of the Gateway.
@@ -318,6 +331,18 @@ class Gateway(GatewayInterface):
             return self.device_registry.device_by_id.get(device_id)
         return None
 
+    def update_message_history(self, msg: ApplicationMessage) -> None:
+        """Update the message history in a thread-safe manner."""
+        with self._history_lock:
+            self._prev_msg = self._this_msg
+            self._this_msg = msg
+
+    def clear_message_history(self) -> None:
+        """Clear the message history in a thread-safe manner."""
+        with self._history_lock:
+            self._prev_msg = None
+            self._this_msg = None
+
     async def start(
         self,
         /,
@@ -331,8 +356,8 @@ class Gateway(GatewayInterface):
         the schema, and optionally restores state from cached packets
         before starting the transport.
 
-        :param start_discovery: Whether to initiate the discovery process
-            after start, defaults to True.
+        :param start_discovery: Whether to initiate the discovery
+            process after start, defaults to True.
         :type start_discovery: bool, optional
         :param cached_packets: A dictionary of packet strings used to
             restore state, defaults to None.
@@ -439,6 +464,9 @@ class Gateway(GatewayInterface):
         :returns: None
         :rtype: None
         """
+        # Disable discovery to prevent the domain layer spawning new tasks
+        self.config.disable_discovery = True
+
         # Stop the Engine first to ensure no tasks/callbacks try to write
         # to the DB while we are closing it.
         await self._engine.stop()
@@ -532,7 +560,7 @@ class Gateway(GatewayInterface):
             if getattr(msg, "_expired", False) and not include_expired:
                 return False
             if msg.code == Code._0404:
-                return msg.verb in (I_, W_) and msg._pkt._len > 7
+                return msg.verb in (I_, W_) and msg.len > 7
             if msg.verb in (W_, RQ):
                 return False
             # if msg.code == Code._1FC9 and msg.verb != RP:
@@ -545,7 +573,7 @@ class Gateway(GatewayInterface):
             for i, msg in enumerate(all_msgs):
                 if wanted_msg(msg, include_expired=include_expired):
                     dtm_str = msg.dtm.isoformat(timespec="microseconds")
-                    pkts[dtm_str] = msg._pkt.to_dict(parsed_payload=msg.payload)
+                    pkts[dtm_str] = msg.dto.source_packets[0].__dict__
                 if i > 0 and i % 100 == 0:
                     await asyncio.sleep(0)
 
@@ -558,9 +586,9 @@ class Gateway(GatewayInterface):
     ) -> None:
         """Restore cached packets (may include expired packets).
 
-        This process uses a temporary transport to replay the packet history
-        into the message handler. Converts DTOs back to strings to satisfy
-        legacy requirements in `transport_factory`.
+        This process uses a temporary transport to replay the packet
+        history into the message handler. Converts DTOs back to strings
+        to satisfy legacy requirements in `transport_factory`.
 
         :param packets: A dictionary of packet strings or DTO dicts.
         :type packets: dict[str, dict[str, Any] | str]
@@ -582,7 +610,7 @@ class Gateway(GatewayInterface):
             self._tcs = None
             self.device_registry.devices.clear()
             self.device_registry.device_by_id.clear()
-            self._engine.clear_message_history()
+            self.clear_message_history()
 
         _LOGGER.debug("Gateway: Restoring a cached packet log...")
         await self._pause()
@@ -599,7 +627,9 @@ class Gateway(GatewayInterface):
         enforce_include_list = bool(
             self._engine._enforce_known_list
             and extract_known_hgi_id(
-                self._engine._include, disable_warnings=True, strict_checking=True
+                self._engine._include,
+                disable_warnings=True,
+                strict_checking=True,
             )
         )
 
@@ -614,7 +644,7 @@ class Gateway(GatewayInterface):
         # The actual HGI address will be discovered when the actual
         # transport was/is started up (usually before now)
 
-        cutoff_dtm = dt.now() - td(hours=1)
+        cutoff_dtm = dt.now(tz=UTC) - td(hours=1)
 
         for i, (dtm, state) in enumerate(packets.items()):
             if i > 0 and i % 100 == 0:
@@ -723,48 +753,49 @@ class Gateway(GatewayInterface):
         status_dict["_tx_rate"] = tx_rate
         return status_dict
 
-    async def _msg_handler(self, msg: Message) -> None:
+    async def _msg_handler(self, dto: PacketDTO) -> None:
         """A callback to handle messages from the protocol stack.
 
-        :param msg: The message to be handled and processed.
-        :type msg: Message
+        :param dto: The data transfer object to be handled.
+        :type dto: PacketDTO
         :returns: None
         :rtype: None
         """
-        # 1. Promote the raw transport Message to an ApplicationMessage subclass
-        app_msg = ApplicationMessage.from_message(msg)
+        # 1. Promote the raw DTO to an ApplicationMessage subclass
+        app_msg = ApplicationMessage.from_dto(dto)
 
         # 2. Attach the gateway/engine context (so ._expired works correctly)
         app_msg.set_gateway(self._engine)
 
-        # 3. Restore the critical ramses_rf linkage for dynamic Address/Orphan resolution
+        # 3. Restore the critical ramses_rf linkage for dynamic resolution
         app_msg.bind_context(self)  # noqa: B010
 
         # 4. Store it safely in the engine state
-        self._engine.update_message_history(app_msg)
+        self.update_message_history(app_msg)
 
         # TODO: ideally remove this feature...
-        assert self._engine._this_msg  # mypy check
+        assert self._this_msg  # mypy check
 
-        if self._engine._prev_msg and detect_array_fragment(
-            self._engine._this_msg, self._engine._prev_msg
+        if self._prev_msg and detect_array_fragment(
+            self._this_msg,
+            self._prev_msg,
         ):
-            app_msg._pkt._force_has_array()
-            app_msg._payload = self._engine._prev_msg.payload + (
+            app_msg._force_has_array()
+            app_msg._payload = self._prev_msg.payload + (
                 app_msg.payload
                 if isinstance(app_msg.payload, list)
                 else [app_msg.payload]
             )
 
-        # Ensure the downstream application gets the extended subclass, not the pure Message
+        # Ensure the downstream application gets the extended subclass
         await process_msg(self, app_msg)
 
     def add_msg_handler(
         self,
-        msg_handler: Callable[[Message], Awaitable[None]],
+        msg_handler: Callable[[PacketDTO], Awaitable[None]],
         /,
         *,
-        msg_filter: Callable[[Message], bool] | None = None,
+        msg_filter: Callable[[PacketDTO], bool] | None = None,
     ) -> Callable[[], None]:
         """Add a Message handler to the underlying Protocol.
 
@@ -790,10 +821,10 @@ class Gateway(GatewayInterface):
 
     @staticmethod
     def create_cmd(
-        verb: str,
-        device_id: str,
-        code: Code | str,
-        payload: str,
+        verb: VerbT,
+        device_id: DeviceIdT,
+        code: Code,
+        payload: PayloadT,
         **kwargs: Any,
     ) -> Command:
         """Make a command addressed to device_id.
@@ -811,7 +842,13 @@ class Gateway(GatewayInterface):
         :returns: The created Command instance.
         :rtype: Command
         """
-        return Engine.create_cmd(verb, device_id, code, payload, **kwargs)  # type: ignore[arg-type]
+        return Engine.create_cmd(
+            verb,
+            device_id,
+            code,
+            payload,
+            **kwargs,
+        )
 
     def send_cmd(
         self,
@@ -866,6 +903,13 @@ class Gateway(GatewayInterface):
         )
 
         task = self._engine._loop.create_task(coro)
+
+        def _clear_exc(fut: asyncio.Task[Any]) -> None:
+            """Silently clear unhandled exceptions on background tasks."""
+            if not fut.cancelled() and fut.exception():
+                _LOGGER.debug("Background task failed: %s", fut.exception())
+
+        task.add_done_callback(_clear_exc)
         self.add_task(task)
         return task
 
@@ -916,28 +960,26 @@ class Gateway(GatewayInterface):
         :raises ProtocolError: If the system failed to attempt the
             transmission.
         """
-
-        return await self._engine.async_send_cmd(
-            cmd,
-            gap_duration=gap_duration,
-            num_repeats=num_repeats,
-            priority=priority,
-            max_retries=max_retries,
-            timeout=timeout,
-            wait_for_reply=wait_for_reply,
-        )
-
-
-_decoder_pipeline = PayloadDecoderPipeline()
-
-
-# Semantic Parser Bridge
-def decode_payload(msg: Any) -> Any:
-    """Provide ramses_tx with the semantic payload decoder."""
-    return _decoder_pipeline.decode(msg)
-
-
-tx_msg._PAYLOAD_DECODER_CB = decode_payload
+        try:
+            return await self._engine.async_send_cmd(
+                cmd,
+                gap_duration=gap_duration,
+                num_repeats=num_repeats,
+                priority=priority,
+                max_retries=max_retries,
+                timeout=timeout,
+                wait_for_reply=wait_for_reply,
+            )
+        except ProtocolSendFailed as err:
+            if (
+                self.config.disable_discovery
+                or self._engine._disable_sending
+                or "Inactive" in str(err)
+            ):
+                raise asyncio.CancelledError(
+                    f"Gateway shutting down, suppressed teardown leak: {err}"
+                ) from err
+            raise
 
 
 # Schema & Routing Bridges
@@ -948,15 +990,15 @@ def get_code_name(code: str) -> str:
     return f"unknown_{code}"
 
 
-tx_msg._GET_CODE_NAME_CB = get_code_name
+rf_msg._GET_CODE_NAME_CB = get_code_name
 
 
 def get_msg_idx(msg: Any) -> dict[str, str]:
     """Provide ramses_tx with the semantic zone_idx/domain_id routing."""
-    tx_msg._GET_MSG_IDX_CB = None
+    rf_msg._GET_MSG_IDX_CB = None
     idx_result = msg._idx
-    tx_msg._GET_MSG_IDX_CB = get_msg_idx
+    rf_msg._GET_MSG_IDX_CB = get_msg_idx
     return cast("dict[str, str]", idx_result)
 
 
-tx_msg._GET_MSG_IDX_CB = get_msg_idx
+rf_msg._GET_MSG_IDX_CB = get_msg_idx
