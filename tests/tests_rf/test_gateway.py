@@ -202,7 +202,7 @@ async def test_gateway_restore_cached_packets_dto() -> None:
 
         # Simulate the new dictionary format provided by ramses_cc
         packets = {
-            "2023-01-01T12:00:00.000000": {
+            "2023-01-01T12:00:00.000000Z": {
                 "rssi": 45,
                 "frame": "I --- 01:145038 --:------ 01:145038 1F09 003 0004B5",
             }
@@ -212,7 +212,7 @@ async def test_gateway_restore_cached_packets_dto() -> None:
 
         # Verify from_dict was called with the correct args
         mock_from_dict.assert_called_once_with(
-            "2023-01-01T12:00:00.000000", packets["2023-01-01T12:00:00.000000"]
+            "2023-01-01T12:00:00.000000Z", packets["2023-01-01T12:00:00.000000Z"]
         )
 
         # Verify the protocol layer was handed the parsed Packet object directly

@@ -59,11 +59,11 @@ from ramses_tx import (
     ZON_ROLE_MAP,
     Command,
     DeviceIdT,
-    Message,
     Priority,
 )
 from ramses_tx.typing import PayDictT, PayloadT
 
+from ..message import Message
 from .faultlog import FaultLog
 from .zones import zone_factory
 
@@ -716,7 +716,7 @@ class ScheduleSync(SystemBase):  # 0006 (+/- 0404?)
             cmd, wait_for_reply=True, priority=Priority.HIGH
         )
         if pkt:
-            self._msg_0006 = Message(pkt)
+            self._msg_0006 = Message._from_pkt(pkt)
 
         return self._msg_0006.payload[SZ_CHANGE_COUNTER], True  # global_ver, did_io
 

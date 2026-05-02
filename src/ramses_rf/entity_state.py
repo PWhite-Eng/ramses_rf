@@ -10,26 +10,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime as dt
+from datetime import UTC, datetime as dt
 from typing import TYPE_CHECKING, Any, cast
 
-from ramses_tx import Message
-
-from ramses_tx.const import (  # noqa: F401, isort: skip, pylint: disable=unused-import
-    I_,
-    RP,
-    RQ,
-    Code,
-    VerbT,
-)
+from ramses_rf.message import Message
 from ramses_tx.address import ALL_DEVICE_ID
+
+# noqa: F401, isort: skip, pylint: disable=unused-import
+from ramses_tx.const import I_, RP, RQ, Code, VerbT
 from ramses_tx.ramses import CODES_SCHEMA
 
 from . import exceptions as exc
 from .const import SZ_DOMAIN_ID, SZ_NAME, SZ_ZONE_IDX
 
 if TYPE_CHECKING:
-    from ramses_tx.application_message import ApplicationMessage
+    from ramses_rf.application_message import ApplicationMessage
     from ramses_tx.typing import HeaderT
 
     from .interfaces import DeviceInterface, GatewayInterface
@@ -108,7 +103,7 @@ class EntityState:
             return  # No new packets, O(1) instant exit
 
         if current_len < self._log_cursor:
-            # The global log was cleared (e.g. cache reset). Rebuild from scratch.
+            # The global log was cleared (e.g. cache reset). Rebuild.
             self._log_cursor = 0
             self._current_state.clear()
 
@@ -159,7 +154,7 @@ class EntityState:
             ):
                 return  # Payload does not belong to DHW
 
-        # Context-aware O(1) Overwrite guarantees multi-zone devices don't conflict
+        # Context-aware O(1) Overwrite guarantees isolation
         self._current_state[(msg.code, msg.verb, ctx)] = msg
 
     def _is_relevant_msg(self, msg: ApplicationMessage) -> bool:
@@ -280,7 +275,8 @@ class EntityState:
                     is_dhw = entity_id[_ID_SLICE:] == "_HW"
                     is_zone = len(entity_id) > 9 and not is_dhw
                     ctx = kwargs.get(
-                        "zone_idx", entity_id[_ID_SLICE + 1 :] if is_zone else None
+                        "zone_idx",
+                        entity_id[_ID_SLICE + 1 :] if is_zone else None,
                     )
                     if not ctx and is_dhw:
                         ctx = kwargs.get("dhw_idx", "HW")
@@ -410,7 +406,7 @@ class EntityState:
         **kwargs: Any,
     ) -> Code | None:
         """Retrieve the most current Code involving this device."""
-        latest: dt = dt.min
+        latest: dt = dt.min.replace(tzinfo=UTC)
         res: Code | None = None
 
         entity_id = self._entity.id
@@ -482,8 +478,13 @@ class EntityState:
                 else:
                     continue
 
-            if msg.dtm > latest:
-                latest = msg.dtm
+            # Ensure timezone awareness for legacy naive dt
+            msg_dtm = msg.dtm
+            if msg_dtm.tzinfo is None:
+                msg_dtm = msg_dtm.replace(tzinfo=UTC)
+
+            if msg_dtm > latest:
+                latest = msg_dtm
                 res = cd
         return res
 

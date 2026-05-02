@@ -2,8 +2,8 @@
 """RAMSES RF - RAMSES-II compatible packet protocol base classes.
 
 This module provides the foundational protocol layers, handling transport
-binding, basic message dispatching, regex-based payload manipulation, logging
-and device ID filtering mechanisms.
+binding, basic message dispatching, regex-based payload manipulation,
+logging and device ID filtering mechanisms.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from ..const import (
     DevType,
     Priority,
 )
+from ..dtos import PacketDTO
 from ..exceptions import (
     PacketInvalid,
     ProtocolError,
@@ -38,7 +39,6 @@ from ..exceptions import (
 )
 from ..helpers import dt_now
 from ..interfaces import ProtocolInterface, TransportInterface
-from ..message import Message
 from ..packet import Packet
 from ..schemas import SZ_BLOCK_LIST, SZ_CLASS, SZ_INBOUND, SZ_KNOWN_LIST, SZ_OUTBOUND
 from ..typing import DeviceIdT, DeviceListT, MsgFilterT, MsgHandlerT, QosParams
@@ -64,7 +64,8 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
     def __init__(self, msg_handler: MsgHandlerT, /) -> None:
         """Initialize the base protocol.
 
-        :param msg_handler: The callback invoked when a valid message is processed.
+        :param msg_handler: The callback invoked when a valid message is
+            processed.
         :type msg_handler: MsgHandlerT
         """
         super().__init__()
@@ -81,8 +82,8 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
             self._loop.create_future()
         )
 
-        self._this_msg: Message | None = None
-        self._prev_msg: Message | None = None
+        self._this_msg: PacketDTO | None = None
+        self._prev_msg: PacketDTO | None = None
 
         self._is_evofw3: bool | None = None
 
@@ -125,11 +126,13 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
     ) -> Callable[[], None]:
         """Add a Message handler to the list of such callbacks.
 
-        Returns a callback that can be used to subsequently remove the Message handler.
+        Returns a callback that can be used to subsequently remove the
+        Message handler.
 
         :param msg_handler: The handler function to add.
         :type msg_handler: MsgHandlerT
-        :param msg_filter: An optional filter to apply before calling the handler.
+        :param msg_filter: An optional filter to apply before calling
+            the handler.
         :type msg_filter: MsgFilterT | None
         :return: A callable to remove the handler.
         :rtype: Callable[[], None]
@@ -148,9 +151,9 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
     def connection_made(self, transport: TransportInterface) -> None:  # type: ignore[override]
         """Called when the connection to the Transport is established.
 
-        The argument is the transport representing the pipe connection. To receive data,
-        wait for pkt_received() calls. When the connection is closed, connection_lost()
-        is called.
+        The argument is the transport representing the pipe connection.
+        To receive data, wait for pkt_received() calls. When the
+        connection is closed, connection_lost() is called.
         """
         if self._wait_connection_made.done():
             return
@@ -162,9 +165,11 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
     async def wait_for_connection_made(
         self, timeout: float = 1.0
     ) -> TransportInterface:
-        """A courtesy function to wait until connection_made() has been invoked.
+        """A courtesy function to wait until connection_made() has been
+        invoked.
 
-        Will raise TransportError if isn't connected within timeout seconds.
+        Will raise TransportError if isn't connected within timeout
+        seconds.
         """
         try:
             return await asyncio.wait_for(self._wait_connection_made, timeout)
@@ -176,8 +181,9 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
     def connection_lost(self, err: Exception | None) -> None:
         """Called when the connection to the Transport is lost or closed.
 
-        The argument is an exception object or None (the latter meaning a regular EOF is
-        received or the connection was aborted or closed).
+        The argument is an exception object or None (the latter meaning
+        a regular EOF is received or the connection was aborted or
+        closed).
         """
         if not self._wait_connection_lost:
             _LOGGER.debug(
@@ -198,12 +204,14 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
             self._wait_connection_lost.set_result(None)
 
     async def wait_for_connection_lost(self, timeout: float = 1.0) -> Exception | None:
-        """A courtesy function to wait until connection_lost() has been invoked.
-
-        Includes scenarios where neither connection_made() nor connection_lost() were
+        """A courtesy function to wait until connection_lost() has been
         invoked.
 
-        Will raise TransportError if isn't disconnect within timeout seconds.
+        Includes scenarios where neither connection_made() nor
+        connection_lost() were invoked.
+
+        Will raise TransportError if isn't disconnect within timeout
+        seconds.
         """
         if not self._wait_connection_lost:
             return None
@@ -216,18 +224,23 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
                 f"Transport did not unbind from Protocol within {timeout} secs"
             ) from err
         except Exception as err:
-            # If the transport dropped unexpectedly, connection_lost(err) sets
-            # the exception on the future. Awaiting it raises the exception here.
-            # We catch and return it to satisfy the ExceptionT | None type hint
-            # and prevent teardown crashes in the caller.
+            # If the transport dropped unexpectedly,
+            # connection_lost(err) sets the exception on the future.
+            # Awaiting it raises the exception here. We catch and
+            # return it to satisfy the ExceptionT | None type hint and
+            # prevent teardown crashes in the caller.
             return err
 
     def pause_writing(self) -> None:
-        """Called when the transport's buffer goes over the high-water mark."""
+        """Called when the transport's buffer goes over the high-water
+        mark.
+        """
         self._pause_writing = True
 
     def resume_writing(self) -> None:
-        """Called when the transport's buffer drains below the low-water mark."""
+        """Called when the transport's buffer drains below the low-water
+        mark.
+        """
         self._pause_writing = False
 
     async def _send_impersonation_alert(self, cmd: Command) -> None:
@@ -235,10 +248,12 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
         return
 
     def _patch_cmd_if_needed(self, cmd: Command) -> Command:
-        """Patch the command with the actual HGI ID if it uses the default placeholder.
+        """Patch the command with the actual HGI ID if it uses the
+        default placeholder.
 
-        Legacy HGI80s (TI 3410) require the default ID (18:000730), or they will
-        silent-fail. However, evofw3 devices prefer the real ID.
+        Legacy HGI80s (TI 3410) require the default ID (18:000730), or
+        they will silent-fail. However, evofw3 devices prefer the real
+        ID.
         """
         if (
             self.hgi_id
@@ -247,8 +262,8 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
             and self.hgi_id != HGI_DEV_ADDR.id
         ):
             _LOGGER.debug(
-                f"Patching command with active HGI ID: swapped {HGI_DEV_ADDR.id} "
-                f"-> {self.hgi_id} for {cmd._hdr}"
+                f"Patching command with active HGI ID: swapped "
+                f"{HGI_DEV_ADDR.id} -> {self.hgi_id} for {cmd._hdr}"
             )
             return cmd.clone_with_source(self.hgi_id)
 
@@ -264,25 +279,30 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
         priority: Priority = Priority.DEFAULT,
         qos: QosParams | None = None,
     ) -> Packet:
-        """Send a Command with Qos (with retries, until success or ProtocolError).
+        """Send a Command with Qos (with retries, until success or
+        ProtocolError).
 
-        Returns the Command's response Packet or the Command echo if a response is not
-        expected (e.g. sending an RP).
+        Returns the Command's response Packet or the Command echo if a
+        response is not expected (e.g. sending an RP).
 
-        If wait_for_reply is True, return the RQ's RP (or W's I), or raise an exception
-        if one doesn't arrive. If it is False, return the echo of the Command only. If
-        it is None (the default), act as True for RQs, and False for all other Commands.
+        If wait_for_reply is True, return the RQ's RP (or W's I), or
+        raise an exception if one doesn't arrive. If it is False, return
+        the echo of the Command only. If it is None (the default), act
+        as True for RQs, and False for all other Commands.
 
-        num_repeats is # of times to send the Command, in addition to the fist transmit,
-        with gap_duration seconds between each transmission. If wait_for_reply is True,
-        then num_repeats is ignored.
+        num_repeats is # of times to send the Command, in addition to
+        the fist transmit, with gap_duration seconds between each
+        transmission. If wait_for_reply is True, then num_repeats is
+        ignored.
 
-        Commands are queued and sent FIFO, except higher-priority Commands are always
-        sent first.
+        Commands are queued and sent FIFO, except higher-priority
+        Commands are always sent first.
 
         Will raise:
-            ProtocolSendFailed: tried to Tx Command, but didn't get echo/reply
-            ProtocolError:      didn't attempt to Tx Command for some reason
+            ProtocolSendFailed: tried to Tx Command, but didn't get
+                echo/reply
+            ProtocolError:      didn't attempt to Tx Command for some
+                reason
         """
         assert 0 <= gap_duration <= MAX_GAP_DURATION, "Out of range: gap_duration"
         assert 0 <= num_repeats <= MAX_NUM_REPEATS, "Out of range: num_repeats"
@@ -340,8 +360,8 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
     def pkt_received(self, pkt: Packet) -> None:
         """A wrapper for self._pkt_received(pkt).
 
-        Applies inbound regex modifications and tracks synchronization cycles
-        before passing the packet to the internal receiver.
+        Applies inbound regex modifications and tracks synchronization
+        cycles before passing the packet to the internal receiver.
 
         :param pkt: The received Packet object to process.
         """
@@ -351,11 +371,13 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
 
         if hacked_frame != raw_frame:
             try:
-                # Packet.from_port strictly expects the 3-character RSSI + space prefix
+                # Packet.from_port strictly expects the 3-character RSSI
+                # + space prefix
                 pkt = Packet.from_port(pkt.dtm, f"{pkt.rssi} {hacked_frame}")
             except (ValueError, PacketInvalid) as err:
                 _LOGGER.debug(f"Regex modified frame is invalid, reverting: {err}")
-                # Fallback to original packet if regex broke it (pkt remains unchanged)
+                # Fallback to original packet if regex broke it (pkt
+                # remains unchanged)
 
         # Track Sync Cycles
         if pkt.code == Code._1F09 and pkt.verb == I_ and pkt._len == 3:
@@ -364,7 +386,8 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
                 """Check if a packet's sync cycle is still pending.
 
                 :param p: The packet to evaluate.
-                :return: True if the packet is within the pending window.
+                :return: True if the packet is within the pending
+                    window.
                 """
                 return bool(p.dtm + td(seconds=int(p.payload[2:6], 16) / 10) > dt_now())
 
@@ -387,17 +410,18 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
     def _pkt_received(self, pkt: Packet) -> None:
         """Called by the Transport when a Packet is received."""
         try:
-            msg = Message(pkt)  # should log all invalid msgs appropriately
+            msg = pkt.to_dto()  # should log all invalid msgs appropriately
         except PacketInvalid as err:
-            # We explicitly catch specific validation failures. Unhandled internal errors
-            # like TypeError or AttributeError will correctly bubble up and fail loudly.
+            # We explicitly catch specific validation failures. Unhandled
+            # internal errors like TypeError or AttributeError will
+            # correctly bubble up and fail loudly.
             _LOGGER.debug(f"Dropped invalid packet during parsing: {err}")
             return
 
         self._this_msg, self._prev_msg = msg, self._this_msg
         self._msg_received(msg)
 
-    def _msg_received(self, msg: Message) -> None:
+    def _msg_received(self, msg: PacketDTO) -> None:
         """Pass any valid/wanted Messages to the client's callbacks.
 
         Also maintain _prev_msg, _this_msg attrs.
@@ -417,7 +441,9 @@ class _BaseProtocol(ProtocolInterface, asyncio.Protocol):
 
 
 class _DeviceIdFilterMixin(_BaseProtocol):
-    """Filter out any unwanted (but otherwise valid) packets via device ids."""
+    """Filter out any unwanted (but otherwise valid) packets via device
+    ids.
+    """
 
     def __init__(
         self,
@@ -463,15 +489,18 @@ class _DeviceIdFilterMixin(_BaseProtocol):
         disable_warnings: bool = False,
         strict_checking: bool = False,
     ) -> DeviceIdT | None:
-        """Return the device_id of the gateway specified in the include_list, if any.
+        """Return the device_id of the gateway specified in the
+        include_list, if any.
 
-        The 'Known' gateway is the predicted Active gateway, given the known_list.
-        The 'Active' gateway is the USB device that is actually Tx/Rx-ing frames.
+        The 'Known' gateway is the predicted Active gateway, given the
+        known_list. The 'Active' gateway is the USB device that is
+        actually Tx/Rx-ing frames.
 
-        The Known gateway ID should be the Active gateway ID, but does not have to
-        match.
+        The Known gateway ID should be the Active gateway ID, but does
+        not have to match.
 
-        Will send a warning if the include_list is configured incorrectly.
+        Will send a warning if the include_list is configured
+        incorrectly.
         """
         logger = _LOGGER.warning if not disable_warnings else _LOGGER.debug
 
@@ -488,8 +517,9 @@ class _DeviceIdFilterMixin(_BaseProtocol):
 
         if not explicit_hgis and not implicit_hgis:
             logger(
-                f"The {SZ_KNOWN_LIST} SHOULD include exactly one gateway (HGI), "
-                f"but does not (it should specify 'class: HGI')"
+                f"The {SZ_KNOWN_LIST} SHOULD include exactly one "
+                f"gateway (HGI), but does not (it should specify "
+                f"'class: HGI')"
             )
             return None
 
@@ -500,14 +530,16 @@ class _DeviceIdFilterMixin(_BaseProtocol):
             DEV_TYPE_MAP[DevType.HGI],
         ):
             logger(
-                f"The {SZ_KNOWN_LIST} SHOULD include exactly one gateway (HGI): "
-                f"{known_hgi} should specify 'class: HGI', as 18: is also used for HVAC"
+                f"The {SZ_KNOWN_LIST} SHOULD include exactly one "
+                f"gateway (HGI): {known_hgi} should specify 'class: "
+                f"HGI', as 18: is also used for HVAC"
             )
 
         elif len(explicit_hgis) > 1:
             logger(
-                f"The {SZ_KNOWN_LIST} SHOULD include exactly one gateway (HGI): "
-                f"{known_hgi} is the chosen device id (why is there >1 HGI?)"
+                f"The {SZ_KNOWN_LIST} SHOULD include exactly one "
+                f"gateway (HGI): {known_hgi} is the chosen device id "
+                f"(why is there >1 HGI?)"
             )
 
         else:
@@ -549,7 +581,8 @@ class _DeviceIdFilterMixin(_BaseProtocol):
     ) -> bool:
         """Return True if the packet is not to be filtered out.
 
-        In any one packet, an excluded device_id 'trumps' an included device_id.
+        In any one packet, an excluded device_id 'trumps' an included
+        device_id.
         """
 
         def warn_foreign_hgi(dev_id: DeviceIdT) -> None:

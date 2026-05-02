@@ -18,7 +18,6 @@ from .address import (
     Address,
     is_valid_dev_id,
 )
-from .application_message import ApplicationMessage
 from .command import CODE_API_MAP, Command
 from .const import (
     DEV_ROLE_MAP,
@@ -45,7 +44,6 @@ from .const import (
 from .discovery import is_hgi80
 from .engine import Engine
 from .logger import set_pkt_logging
-from .message import Message
 from .packet import PKT_LOGGER, Packet
 from .protocol import PortProtocol, ReadProtocol, protocol_factory
 from .ramses import (
@@ -127,7 +125,6 @@ __all__ = [
     "Address",
     "Code",
     "Command",
-    "Message",
     "Packet",
     "Priority",
     "QosParams",
@@ -145,7 +142,6 @@ __all__ = [
     #
     "is_valid_dev_id",
     "set_pkt_logging_config",
-    "ApplicationMessage",
     "Engine",
 ]
 

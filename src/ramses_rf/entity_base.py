@@ -17,12 +17,13 @@ from .discovery import DiscoveryService
 from .entity_state import EntityState
 
 if TYPE_CHECKING:
-    from ramses_tx import Command, Message, Packet
+    from ramses_tx import Command, Packet
     from ramses_tx.typing import DeviceIdT, DevIndexT
 
     from .device import Controller
     from .gateway import Gateway
     from .interfaces import DeviceInterface
+    from .message import Message
     from .system import Evohome
 
 
