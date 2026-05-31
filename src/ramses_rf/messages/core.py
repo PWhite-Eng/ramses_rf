@@ -6,6 +6,7 @@ from typing import Any
 
 from ramses_rf.address import Address
 from ramses_rf.enums import Topic
+from ramses_rf.routing import StateHeader
 from ramses_tx.dtos import PacketDTO
 
 
@@ -15,6 +16,8 @@ class Message:
 
     :param topic: The event bus routing discriminator.
     :type topic: Topic
+    :param header: The immutable L7 routing state header.
+    :type header: StateHeader
     :param src: The logical origin of the message.
     :type src: Address
     :param dst: The logical target of the message.
@@ -30,6 +33,7 @@ class Message:
     """
 
     topic: Topic
+    header: StateHeader
     src: Address
     dst: Address
     data: dict[str, Any]

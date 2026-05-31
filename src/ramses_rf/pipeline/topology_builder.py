@@ -6,19 +6,9 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from ramses_rf.const import (
-    I_,
-    SZ_DEVICES,
-    SZ_DOMAIN_ID,
-    SZ_UFH_IDX,
-    SZ_ZONE_IDX,
-    SZ_ZONE_TYPE,
-    ZON_ROLE_MAP,
-    Code,
-    DevType,
-)
+from ramses_rf.const import I_, SZ_DOMAIN_ID, SZ_UFH_IDX, SZ_ZONE_IDX, Code, DevType
 from ramses_rf.enums import TopologyAction
-from ramses_rf.messages import Message
+from ramses_rf.messages.core import Message
 from ramses_rf.models import TopologyChangedEvent
 from ramses_rf.protocol.ramses import CODES_ONLY_FROM_CTL
 
@@ -67,6 +57,7 @@ class TopologyBuilder:
             self._evaluate_dhw_opentherm_rules,
             self._evaluate_heating_prefix_rules,
             self._evaluate_appliance_control_sync_rules,
+            self._evaluate_eavesdrop_rules,
         ]
 
     async def consume(self, msg: Message) -> None:
@@ -88,11 +79,13 @@ class TopologyBuilder:
         Historically, entities intercepted CODES_ONLY_FROM_CTL to
         dynamically promote themselves to Controllers. We now extract
         that logic into this explicit, trackable rule.
+
+        :param msg: The immutable Message L7 envelope to evaluate.
         """
         if not self._enable_eavesdrop:
             return
 
-        if msg.verb == I_ and msg.code in CODES_ONLY_FROM_CTL:
+        if msg.header.verb == I_ and msg.header.code in CODES_ONLY_FROM_CTL:
             event = TopologyChangedEvent(
                 action=TopologyAction.CREATE_CONTROLLER,
                 device_id=msg.src.id,
@@ -101,12 +94,14 @@ class TopologyBuilder:
             self._emit(event)
 
     def _evaluate_zone_binding_rules(self, msg: Message) -> None:
-        """Evaluate 000C and heuristic packets to bind actuators to zones."""
+        """Evaluate 000C and heuristic packets to bind actuators to zones.
 
+        :param msg: The immutable Message L7 envelope to evaluate.
+        """
         # EXPLICIT BINDING: Controllers (01) broadcasting 000C device maps
-        if msg.code == Code._000C and msg.src.type == "01":
-            # Safely handle both single dicts and arrays of dicts
-            payloads = msg.payload if isinstance(msg.payload, list) else [msg.payload]
+        if msg.header.code == Code._000C and msg.src.type == "01":
+            # Safely extract array from strict L7 data envelope
+            payloads = msg.data.get("_array", [msg.data])
 
             for p in payloads:
                 if not isinstance(p, dict):
@@ -125,14 +120,15 @@ class TopologyBuilder:
                 metadata: dict[str, Any] = {}
                 if device_role is not None:
                     metadata["is_sensor"] = "sensor" in str(device_role)
-                    metadata["device_role"] = str(
-                        device_role
-                    )  # Explicit DHW preservation
+                    # Explicit DHW preservation
+                    metadata["device_role"] = str(device_role)
 
                 if zone_idx is not None:
                     # Clone metadata to avoid cross-iteration pollution
                     event_meta = dict(metadata)
-                    event_meta["zone_idx"] = zone_idx
+                    event_meta["zone_idx"] = str(zone_idx)
+                    # Bridging quirk: DeviceRegistry expects domain index under "child_id"
+                    event_meta["child_id"] = str(zone_idx)
                     for child_id in devices:
                         event = TopologyChangedEvent(
                             action=TopologyAction.BIND_DEVICE,
@@ -145,7 +141,8 @@ class TopologyBuilder:
 
                 elif domain_id is not None:
                     event_meta = dict(metadata)
-                    event_meta["domain_id"] = domain_id
+                    event_meta["domain_id"] = str(domain_id)
+                    event_meta["child_id"] = str(domain_id)
                     for child_id in devices:
                         event = TopologyChangedEvent(
                             action=TopologyAction.BIND_DEVICE,
@@ -161,44 +158,82 @@ class TopologyBuilder:
 
         Devices (TRVs, Thermostats, DHW sensors) explicitly declare their
         topological relationships by broadcasting telemetry (e.g., 30C9,
-        3150, 1060, 1260) directly to their parent Controller (01).
+        3150) directly to their parent Controller (01).
+
+        :param msg: The immutable Message L7 envelope to evaluate.
         """
         if not self._enable_eavesdrop:
             return
 
-        # Broaden the net: Intercept ANY directed telemetry to a Controller,
-        # but strictly prevent the Controller from binding to itself.
-        if msg.verb == I_ and msg.dst.type == "01" and msg.src.id != msg.dst.id:
-            # Safely handle both single dicts and arrays of dicts (like 1060)
-            payloads = msg.payload if isinstance(msg.payload, list) else [msg.payload]
+        # Implicit bindings ONLY occur on specific domain-routed codes
+        # 2309: Zone Sync, 3150: Heat Demand, 30C9: Temp, 0008: Relay
+        # 1260: DHW Temp, 10A0: DHW Params, 12B0: Window State, 000A: Zone Name
+        BINDING_CODES = (
+            Code._2309,
+            Code._3150,
+            Code._30C9,
+            Code._0008,
+            Code._0004,
+            Code._1260,
+            Code._10A0,
+            Code._12B0,
+            Code._000A,
+            Code._2349,
+        )
+
+        # Intercept directed telemetry to a Controller, preventing self-binding
+        if msg.header.verb == I_ and msg.dst.type == "01" and msg.src.id != msg.dst.id:
+            if msg.header.code not in BINDING_CODES:
+                return
+
+            payloads = msg.data.get("_array", [msg.data])
 
             for p in payloads:
                 if not isinstance(p, dict):
                     continue
 
-                # Strictly separate Zone routing from Domain routing
                 zone_idx = p.get(SZ_ZONE_IDX)
                 domain_id = p.get(SZ_DOMAIN_ID)
 
-                if zone_idx is not None:
-                    event = TopologyChangedEvent(
-                        action=TopologyAction.BIND_DEVICE,
-                        parent_id=msg.dst.id,
-                        child_id=msg.src.id,
-                        metadata={"zone_idx": str(zone_idx)},
-                        causation="Rule_Directed_Telemetry_Binding_Zone",
-                    )
-                    self._emit(event)
+                metadata: dict[str, Any] = {}
 
+                # Explicitly flag actuators vs sensors for the registry
+                if msg.header.code in (Code._3150, Code._0008, Code._2309, Code._000A):
+                    metadata["device_role"] = "actuator"
+                elif msg.header.code in (
+                    Code._30C9,
+                    Code._1260,
+                    Code._10A0,
+                    Code._12B0,
+                ):
+                    metadata["device_role"] = "sensor"
+                    metadata["is_sensor"] = "True"
+
+                if zone_idx is not None:
+                    metadata["zone_idx"] = str(zone_idx)
+                    metadata["child_id"] = str(zone_idx)
                 elif domain_id is not None:
-                    event = TopologyChangedEvent(
+                    # DHW domains are "FA", "F9", "FC". Zones are "00" to "0B".
+                    if domain_id in ("F9", "FA", "FC"):
+                        metadata["domain_id"] = str(domain_id)
+                        metadata["child_id"] = str(domain_id)
+                    else:
+                        # For zone actuators (TRVs), domain_id is functionally the zone_idx
+                        metadata["zone_idx"] = str(domain_id)
+                        metadata["domain_id"] = str(domain_id)
+                        metadata["child_id"] = str(domain_id)
+                else:
+                    continue  # Nothing to bind
+
+                self._emit(
+                    TopologyChangedEvent(
                         action=TopologyAction.BIND_DEVICE,
                         parent_id=msg.dst.id,
                         child_id=msg.src.id,
-                        metadata={"domain_id": str(domain_id)},
-                        causation="Rule_Directed_Telemetry_Binding_Domain",
+                        metadata=metadata,
+                        causation="Rule_Directed_Telemetry_Binding",
                     )
-                    self._emit(event)
+                )
 
     def _evaluate_ufh_rules(self, msg: Message) -> None:
         """Evaluate rules specific to Underfloor Heating (UFH).
@@ -206,108 +241,118 @@ class TopologyBuilder:
         UFCs broadcast their circuit mappings via 000C messages.
         We intercept these to bind the UFC to the Controller and map
         the individual circuits to their corresponding zones.
-        Note: This is explicit configuration data, not a heuristic,
-        so it is processed regardless of the enable_eavesdrop flag.
+
+        :param msg: The immutable Message L7 envelope to evaluate.
         """
         # Prefix Guard: Ensure the source is an Underfloor Heating Controller
-        if msg.src.type != "02":
+        if msg.src.type != "02" or msg.header.code != Code._000C:
             return
 
-        if msg.code != Code._000C:
-            return
+        # UFC 000C packets are addressed directly to the parent Controller
+        ctl_id = msg.dst.id if msg.dst.type == "01" else None
 
-        zone_type = msg.payload.get(SZ_ZONE_TYPE)
-        if zone_type not in (ZON_ROLE_MAP.ACT, ZON_ROLE_MAP.UFH):
-            return
-
-        devices = msg.payload.get(SZ_DEVICES, [])
-        if not devices:
-            return
-
-        ctl_id = devices[0]
         ufc_id = msg.src.id
 
-        # 1. Bind the UFC to the parent Controller
-        event_bind = TopologyChangedEvent(
-            action=TopologyAction.BIND_DEVICE,
-            parent_id=ctl_id,
-            child_id=ufc_id,
-            causation="Rule_UFH_000C_Binding",
-        )
-        self._emit(event_bind)
+        # 1. Bind the UFC to the parent Controller if directed
+        if ctl_id and ctl_id != "--:------":
+            self._emit(
+                TopologyChangedEvent(
+                    action=TopologyAction.BIND_DEVICE,
+                    parent_id=ctl_id,
+                    child_id=ufc_id,
+                    metadata={"device_role": "ufc"},
+                    causation="Rule_UFH_000C_Binding",
+                )
+            )
 
         # 2. Create the Circuit and map it to the Zone
-        ufh_idx = msg.payload.get(SZ_UFH_IDX)
-        zone_idx = msg.payload.get(SZ_ZONE_IDX)
+        payloads = msg.data.get("_array", [msg.data])
 
-        if ufh_idx is not None:
-            event_circuit = TopologyChangedEvent(
-                action=TopologyAction.CREATE_CIRCUIT,
-                device_id=ufc_id,
-                metadata={
-                    "ufh_idx": ufh_idx,
-                    "zone_idx": zone_idx if zone_idx else "None",
-                },
-                causation="Rule_UFH_000C_Circuit",
-            )
-            self._emit(event_circuit)
+        for p in payloads:
+            if not isinstance(p, dict):
+                continue
+
+            ufh_idx = p.get(SZ_UFH_IDX)
+            zone_idx = p.get(SZ_ZONE_IDX)
+
+            if ufh_idx is not None:
+                self._emit(
+                    TopologyChangedEvent(
+                        action=TopologyAction.CREATE_CIRCUIT,
+                        device_id=ufc_id,
+                        metadata={
+                            "ufh_idx": str(ufh_idx),
+                            "zone_idx": str(zone_idx) if zone_idx else "None",
+                            "child_id": str(zone_idx) if zone_idx else "None",
+                        },
+                        causation="Rule_UFH_000C_Circuit",
+                    )
+                )
 
     def _evaluate_hvac_rules(self, msg: Message) -> None:
         """Evaluate rules specific to Ventilation and HVAC.
 
         HVAC devices share prefixes (e.g., 32: can be a Fan, CO2, etc.).
         Therefore, we promote classes based purely on signature codes.
+
+        :param msg: The immutable Message L7 envelope to evaluate.
         """
         if not self._enable_eavesdrop:
             return
 
-        if msg.code in (Code._31D9, Code._31DA):
-            event = TopologyChangedEvent(
-                action=TopologyAction.PROMOTE_CLASS,
-                device_id=msg.src.id,
-                metadata={"device_class": DevType.FAN},
-                causation="Rule_HVAC_Fan_Signature",
-            )
-            self._emit(event)
+        hvac_promotions = {
+            Code._31D9: DevType.FAN,
+            Code._31DA: DevType.FAN,
+            Code._1298: DevType.CO2,
+            Code._12A0: DevType.HUM,
+            Code._22F1: DevType.REM,
+            Code._22F3: DevType.REM,
+            Code._22F8: DevType.REM,
+        }
 
-        elif msg.code == Code._1298:
-            event = TopologyChangedEvent(
-                action=TopologyAction.PROMOTE_CLASS,
-                device_id=msg.src.id,
-                metadata={"device_class": DevType.CO2},
-                causation="Rule_HVAC_CO2_Signature",
-            )
-            self._emit(event)
+        # Type narrow to ensure we only look up valid Code enums
+        if isinstance(msg.header.code, Code) and msg.header.code in hvac_promotions:
+            dev_class = hvac_promotions[msg.header.code]
 
-        elif msg.code == Code._12A0:
-            event = TopologyChangedEvent(
-                action=TopologyAction.PROMOTE_CLASS,
-                device_id=msg.src.id,
-                metadata={"device_class": DevType.HUM},
-                causation="Rule_HVAC_HUM_Signature",
-            )
-            self._emit(event)
+            # Promote Source (if the device is transmitting, and NOT a controller)
+            if msg.src.id != "--:------" and msg.src.type != "01":
+                self._emit(
+                    TopologyChangedEvent(
+                        action=TopologyAction.PROMOTE_CLASS,
+                        device_id=msg.src.id,
+                        metadata={"device_class": dev_class},
+                        causation="Rule_HVAC_Signature_Source",
+                    )
+                )
 
-        elif msg.code in (Code._22F1, Code._22F3):
-            event = TopologyChangedEvent(
-                action=TopologyAction.PROMOTE_CLASS,
-                device_id=msg.src.id,
-                metadata={"device_class": DevType.REM},
-                causation="Rule_HVAC_REM_Signature",
-            )
-            self._emit(event)
+            # Promote Target (if the controller is querying/commanding the device)
+            if (
+                msg.dst.id != "--:------"
+                and msg.dst.id != msg.src.id
+                and msg.dst.type != "01"
+            ):
+                self._emit(
+                    TopologyChangedEvent(
+                        action=TopologyAction.PROMOTE_CLASS,
+                        device_id=msg.dst.id,
+                        metadata={"device_class": dev_class},
+                        causation="Rule_HVAC_Signature_Target",
+                    )
+                )
 
     def _evaluate_dhw_opentherm_rules(self, msg: Message) -> None:
         """Evaluate rules specific to DHW and OpenTherm Bridges.
 
         OpenTherm Bridges exclusively use 3220. DHW sensors are deduced
         via 1260 and 10A0 packets.
+
+        :param msg: The immutable Message L7 envelope to evaluate.
         """
         if not self._enable_eavesdrop:
             return
 
         # Prefix Guard: Prevent cross-promotion (e.g., OTB sending 1260)
-        if msg.code == Code._3220 and msg.src.type == "10":
+        if msg.header.code == Code._3220 and msg.src.type == "10":
             event = TopologyChangedEvent(
                 action=TopologyAction.PROMOTE_CLASS,
                 device_id=msg.src.id,
@@ -316,7 +361,7 @@ class TopologyBuilder:
             )
             self._emit(event)
 
-        elif msg.code in (Code._1260, Code._10A0) and msg.src.type == "07":
+        elif msg.header.code in (Code._1260, Code._10A0) and msg.src.type == "07":
             event = TopologyChangedEvent(
                 action=TopologyAction.PROMOTE_CLASS,
                 device_id=msg.src.id,
@@ -331,6 +376,8 @@ class TopologyBuilder:
         Legacy architecture automatically promoted generic devices into specific
         heating domain subtypes (e.g., TRV, UFC, BDR) the moment their address
         was observed anywhere in the packet (src, dst, or embedded in payload).
+
+        :param msg: The immutable Message L7 envelope to evaluate.
         """
         if not self._enable_eavesdrop:
             return
@@ -345,15 +392,10 @@ class TopologyBuilder:
             "34": DevType.THM,
         }
 
-        # The `_addrs` tuple contains the header addresses (src, dst) AND any
-        # addresses deeply embedded in the raw payload (e.g. 000C arrays).
-        addrs = getattr(msg._pkt, "_addrs", [])
-
-        # Fallback to src/dst if _addrs is somehow missing
-        if not addrs:
-            addrs = [msg.src]
-            if msg.dst:
-                addrs.append(msg.dst)
+        # Safe L7 extraction (dropping the legacy _pkt._addrs shim)
+        addrs = [msg.src]
+        if msg.dst and msg.dst.id != "--:------" and msg.dst.id != msg.src.id:
+            addrs.append(msg.dst)
 
         for addr in addrs:
             if getattr(addr, "type", None) in prefix_map:
@@ -369,9 +411,6 @@ class TopologyBuilder:
         """Evaluate direct configuration syncs to map the System Relay.
 
         :param msg: The immutable Message L7 envelope to evaluate.
-        :type msg: Message
-        :return: None
-        :rtype: None
         """
         if not self._enable_eavesdrop:
             return
@@ -379,12 +418,52 @@ class TopologyBuilder:
         # Guard: Catch direct commands from the Controller (01) to a Relay (13)
         if msg.src.type == "01" and msg.dst and msg.dst.type == "13":
             # 1100 (Boiler Params) or 10E0/1FC9 (Binding) are direct links
-            if msg.code in (Code._1100, Code._10E0, Code._1FC9):
+            if msg.header.code in (Code._1100, Code._10E0, Code._1FC9):
                 event = TopologyChangedEvent(
                     action=TopologyAction.BIND_DEVICE,
                     parent_id=msg.src.id,
                     child_id=msg.dst.id,
-                    metadata={"domain_id": "FC", "device_role": "appliance_control"},
+                    metadata={
+                        "domain_id": "FC",
+                        "child_id": "FC",
+                        "device_role": "appliance_control",
+                    },
                     causation="Rule_Direct_Relay_Sync",
                 )
                 self._emit(event)
+
+    def _evaluate_eavesdrop_rules(self, msg: Message) -> None:
+        """Evaluate broadcast telemetry for heuristic sensor correlation.
+
+        :param msg: The immutable Message L7 envelope to evaluate.
+        """
+        if not self._enable_eavesdrop:
+            return
+
+        # Catch Controller Sync Array (30C9 from 01 to --:------ or specific)
+        if (
+            msg.header.verb == I_
+            and msg.header.code == Code._30C9
+            and msg.src.type == "01"
+        ):
+            event = TopologyChangedEvent(
+                action=TopologyAction.UPDATE_TRAITS,
+                device_id=msg.src.id,
+                metadata={"eavesdrop": "controller_sync", "payload": str(msg.data)},
+                causation="Rule_30C9_Controller_Sync",
+            )
+            self._emit(event)
+
+        # Catch Orphan Sensor Broadcast (30C9 from sensors to themselves)
+        elif (
+            msg.header.verb == I_
+            and msg.header.code == Code._30C9
+            and msg.dst.id == msg.src.id
+        ):
+            event = TopologyChangedEvent(
+                action=TopologyAction.UPDATE_TRAITS,
+                device_id=msg.src.id,
+                metadata={"eavesdrop": "orphan_broadcast", "payload": str(msg.data)},
+                causation="Rule_30C9_Orphan_Broadcast",
+            )
+            self._emit(event)

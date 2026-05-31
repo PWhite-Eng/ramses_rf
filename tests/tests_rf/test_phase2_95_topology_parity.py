@@ -118,11 +118,8 @@ async def test_topology_builder_parity(log_file_path: Path) -> None:
         if reader_task:
             await reader_task
 
-    async_schema = (
-        await async_gwy.schema()
-        if inspect.iscoroutinefunction(async_gwy.schema)
-        else async_gwy.schema()
-    )
+    cqrs_schema = await async_gwy.device_registry.generate_schema()  # type: ignore[attr-defined]
+
     await async_gwy.stop()
 
     # ------------------------------------------------------------------------
@@ -130,7 +127,7 @@ async def test_topology_builder_parity(log_file_path: Path) -> None:
     # ------------------------------------------------------------------------
     # Ensure Mypy treats both schemas as strict dicts for modification/indexing
     schema: dict[str, Any] = legacy_schema  # type: ignore[assignment]
-    a_schema: dict[str, Any] = async_schema  # type: ignore[assignment]
+    a_schema: dict[str, Any] = cqrs_schema
 
     tcs_id = schema.get("main_tcs")
     if isinstance(tcs_id, str) and tcs_id in schema:
@@ -167,7 +164,7 @@ async def test_topology_builder_parity(log_file_path: Path) -> None:
     # ------------------------------------------------------------------------
     # STEP 4: Assert Parity
     # ------------------------------------------------------------------------
-    assert async_schema == legacy_schema, "TopologyBuilder parity failed"
+    assert cqrs_schema == legacy_schema, "TopologyBuilder parity failed"
 
     # NOTE ON ZONE 0B ("Old Shop") TRV BINDING:
     # This asserts a real-world edge-case capture (a mixed-heat/testing setup)

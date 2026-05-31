@@ -281,10 +281,23 @@ class Gateway(GatewayLifecycle, GatewayInterface):
                 else [app_msg.payload]
             )
 
-        # NEW: Feed the async TopologyBuilder so it can structurally map the
-        # graph *before* the message state is ingested by the Read-Models.
-        if isinstance(getattr(app_msg, "payload", None), dict):
-            await self._topology_builder.consume(app_msg)
+            # NEW: Feed the async TopologyBuilder so it can structurally map the
+            # graph *before* the message state is ingested by the Read-Models.
+            if isinstance(getattr(app_msg, "payload", None), dict):
+                # Temporary Phase 2.8 Strangler Fig Translation
+                from ramses_rf.enums import Topic
+                from ramses_rf.messages.core import Message as CoreMessage
+
+                core_msg = CoreMessage(
+                    topic=Topic.TOPOLOGY_DISCOVERY,
+                    header=app_msg.state_header,
+                    src=app_msg.src,
+                    dst=app_msg.dst,
+                    data=app_msg.payload,
+                    packets=(),  # L3 packets dropped for legacy bridging
+                    timestamp=app_msg.dtm,
+                )
+                await self._topology_builder.consume(core_msg)
 
         await process_msg(self, app_msg)
 
