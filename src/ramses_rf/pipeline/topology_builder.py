@@ -58,6 +58,8 @@ class TopologyBuilder:
             self._evaluate_heating_prefix_rules,
             self._evaluate_appliance_control_sync_rules,
             self._evaluate_eavesdrop_rules,
+            self._evaluate_implicit_binding_rules,
+            self._evaluate_third_address_broadcast_rules,
         ]
 
     async def consume(self, msg: Message) -> None:
@@ -465,5 +467,81 @@ class TopologyBuilder:
                 device_id=msg.src.id,
                 metadata={"eavesdrop": "orphan_broadcast", "payload": str(msg.data)},
                 causation="Rule_30C9_Orphan_Broadcast",
+            )
+            self._emit(event)
+
+    def _evaluate_implicit_binding_rules(self, msg: Message) -> None:
+        """Evaluate implicit bindings from directed controller polls.
+
+        If a Controller (01:) explicitly sends a direct command (RQ, W) to a
+        heating device (e.g., 04: TRV, 00: Zone Sensor, 08: Relay), it implies
+        the controller believes that device belongs to its network.
+
+        :param msg: The immutable Message L7 envelope to evaluate.
+        :type msg: Message
+        :return: None
+        :rtype: None
+        """
+        if not self._enable_eavesdrop:
+            return
+
+        # 1. We only care about explicit, directed requests/writes
+        if msg.header.verb not in ("RQ", " W"):
+            return
+
+        # 2. The source MUST be a Controller
+        if getattr(msg.src, "type", None) != "01":
+            return
+
+        # 3. The target MUST be a valid Heating Domain device
+        # (00 = Zone Sensor, 04 = TRV, 08 = Relay/BDR91)
+        if getattr(msg.dst, "type", None) not in ("00", "04", "08"):
+            return
+
+        # Emit the topology mutation event. The downstream Registry
+        # will safely process this and ignore it if already bound.
+        event = TopologyChangedEvent(
+            action=TopologyAction.BIND_DEVICE,
+            parent_id=msg.src.id,
+            child_id=msg.dst.id,
+            metadata={
+                "device_role": "actuator" if msg.dst.type in ("04", "08") else "sensor"
+            },
+            causation="Rule_Implicit_Poll_Binding",
+        )
+        self._emit(event)
+
+    def _evaluate_third_address_broadcast_rules(self, msg: Message) -> None:
+        """Evaluate bindings from the third address field of broadcasts.
+
+        Many heating devices broadcast telemetry (I ---) to no one in
+        particular (--:------), but explicitly declare their parent
+        Controller in the third address slot of the RF frame.
+
+        :param msg: The immutable Message L7 envelope to evaluate.
+        :type msg: Message
+        :return: None
+        :rtype: None
+        """
+        if not self._enable_eavesdrop:
+            return
+
+        if msg.header.verb != I_:
+            return
+
+        # Pure L7 architectural access using the new Domain property
+        if getattr(msg.addr3, "type", None) == "01" and getattr(
+            msg.src, "type", None
+        ) in ("00", "04", "08"):
+            event = TopologyChangedEvent(
+                action=TopologyAction.BIND_DEVICE,
+                parent_id=msg.addr3.id,
+                child_id=msg.src.id,
+                metadata={
+                    "device_role": "actuator"
+                    if msg.src.type in ("04", "08")
+                    else "sensor"
+                },
+                causation="Rule_3rd_Address_Declaration",
             )
             self._emit(event)

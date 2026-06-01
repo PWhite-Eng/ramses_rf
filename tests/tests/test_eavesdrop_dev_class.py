@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """RAMSES RF - Test eavesdropping of a device class."""
 
+import asyncio
 import json
 from pathlib import Path, PurePath
 
@@ -9,10 +10,28 @@ import pytest
 from ramses_rf import Gateway, Message
 from ramses_rf.gateway import GatewayConfig
 from ramses_tx.config import EngineConfig
+from ramses_tx.const import SZ_READER_TASK
 
 from .helpers import TEST_DIR, assert_expected
 
 WORK_DIR = f"{TEST_DIR}/eavesdrop_dev_class"
+
+
+async def drain_cqrs_queues(gwy_cqrs: Gateway) -> None:
+    """Ensure all CQRS event bus queues are fully drained before proceeding."""
+    dispatcher = getattr(gwy_cqrs, "dispatcher", None)
+
+    if dispatcher:
+        if hasattr(dispatcher, "discovery_queue"):
+            await dispatcher.discovery_queue.join()
+
+        if hasattr(dispatcher, "ssot_queue"):
+            await dispatcher.ssot_queue.join()
+
+        if hasattr(dispatcher, "binding_fsm_queue"):
+            await dispatcher.binding_fsm_queue.join()
+
+    await asyncio.sleep(0)
 
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
@@ -46,6 +65,13 @@ async def test_packets_from_log_file(dir_name: Path) -> None:
 
     try:
         await gwy.start()
+
+        # Wait for the L3 transport reader to finish loading the file
+        if gwy._engine._transport:
+            reader_task = gwy._engine._transport.get_extra_info(SZ_READER_TASK)
+            if reader_task:
+                await reader_task
+
     finally:
         await gwy.stop()
 
@@ -63,6 +89,18 @@ async def test_dev_eavesdrop_on_(dir_name: Path) -> None:
         ),
     )
     await gwy.start()
+
+    # 1. Wait for the L3 transport reader to finish loading the file
+    if gwy._engine._transport:
+        reader_task = gwy._engine._transport.get_extra_info(SZ_READER_TASK)
+        if reader_task:
+            await reader_task
+
+    # 2. Yield to the event loop so L3 can push packets into the L7 queues
+    await asyncio.sleep(0.1)
+
+    # 3. Wait for the L7 event bus queues to fully drain
+    await drain_cqrs_queues(gwy)
 
     with open(f"{dir_name}/known_list_eavesdrop_on.json") as f:
         assert_expected(
@@ -92,6 +130,18 @@ async def test_dev_eavesdrop_off(dir_name: Path) -> None:
         ),
     )
     await gwy.start()
+
+    # 1. Wait for the L3 transport reader to finish loading the file
+    if gwy._engine._transport:
+        reader_task = gwy._engine._transport.get_extra_info(SZ_READER_TASK)
+        if reader_task:
+            await reader_task
+
+    # 2. Yield to the event loop so L3 can push packets into the L7 queues
+    await asyncio.sleep(0.1)
+
+    # 3. Wait for the L7 event bus queues to fully drain
+    await drain_cqrs_queues(gwy)
 
     try:
         with open(f"{dir_name}/known_list_eavesdrop_off.json") as f:
