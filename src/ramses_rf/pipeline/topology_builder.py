@@ -10,7 +10,7 @@ from ramses_rf.const import I_, SZ_DOMAIN_ID, SZ_UFH_IDX, SZ_ZONE_IDX, Code, Dev
 from ramses_rf.enums import TopologyAction
 from ramses_rf.messages.core import Message
 from ramses_rf.models import TopologyChangedEvent
-from ramses_rf.protocol.ramses import CODES_ONLY_FROM_CTL
+from ramses_rf.protocol.ramses import CODES_ONLY_FROM_CTL, HVAC_KLASS_BY_VC_PAIR
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -159,17 +159,14 @@ class TopologyBuilder:
         """Evaluate implicit bindings from directed telemetry broadcasts.
 
         Devices (TRVs, Thermostats, DHW sensors) explicitly declare their
-        topological relationships by broadcasting telemetry (e.g., 30C9,
-        3150) directly to their parent Controller (01).
+        topological relationships by broadcasting telemetry directly to
+        their parent Controller, or via addr3 broadcasts.
 
         :param msg: The immutable Message L7 envelope to evaluate.
         """
         if not self._enable_eavesdrop:
             return
 
-        # Implicit bindings ONLY occur on specific domain-routed codes
-        # 2309: Zone Sync, 3150: Heat Demand, 30C9: Temp, 0008: Relay
-        # 1260: DHW Temp, 10A0: DHW Params, 12B0: Window State, 000A: Zone Name
         BINDING_CODES = (
             Code._2309,
             Code._3150,
@@ -183,8 +180,14 @@ class TopologyBuilder:
             Code._2349,
         )
 
-        # Intercept directed telemetry to a Controller, preventing self-binding
-        if msg.header.verb == I_ and msg.dst.type == "01" and msg.src.id != msg.dst.id:
+        # Identify the Controller ID whether it is a directed target or a broadcast addr3 target
+        ctl_id = None
+        if msg.dst.type == "01":
+            ctl_id = msg.dst.id
+        elif getattr(msg.addr3, "type", None) == "01":
+            ctl_id = msg.addr3.id
+
+        if msg.header.verb == I_ and ctl_id and msg.src.id != ctl_id:
             if msg.header.code not in BINDING_CODES:
                 return
 
@@ -215,12 +218,10 @@ class TopologyBuilder:
                     metadata["zone_idx"] = str(zone_idx)
                     metadata["child_id"] = str(zone_idx)
                 elif domain_id is not None:
-                    # DHW domains are "FA", "F9", "FC". Zones are "00" to "0B".
                     if domain_id in ("F9", "FA", "FC"):
                         metadata["domain_id"] = str(domain_id)
                         metadata["child_id"] = str(domain_id)
                     else:
-                        # For zone actuators (TRVs), domain_id is functionally the zone_idx
                         metadata["zone_idx"] = str(domain_id)
                         metadata["domain_id"] = str(domain_id)
                         metadata["child_id"] = str(domain_id)
@@ -230,10 +231,10 @@ class TopologyBuilder:
                 self._emit(
                     TopologyChangedEvent(
                         action=TopologyAction.BIND_DEVICE,
-                        parent_id=msg.dst.id,
+                        parent_id=ctl_id,
                         child_id=msg.src.id,
                         metadata=metadata,
-                        causation="Rule_Directed_Telemetry_Binding",
+                        causation="Rule_Telemetry_Eavesdrop_Binding",
                     )
                 )
 
@@ -295,27 +296,27 @@ class TopologyBuilder:
         """Evaluate rules specific to Ventilation and HVAC.
 
         HVAC devices share prefixes (e.g., 32: can be a Fan, CO2, etc.).
-        Therefore, we promote classes based purely on signature codes.
+        Therefore, we promote classes dynamically using the central protocol schema.
 
         :param msg: The immutable Message L7 envelope to evaluate.
         """
         if not self._enable_eavesdrop:
             return
 
-        hvac_promotions = {
-            Code._31D9: DevType.FAN,
-            Code._31DA: DevType.FAN,
-            Code._1298: DevType.CO2,
-            Code._12A0: DevType.HUM,
-            Code._22F1: DevType.REM,
-            Code._22F3: DevType.REM,
-            Code._22F8: DevType.REM,
-        }
+        try:
+            code_enum = Code(msg.header.code)
+        except ValueError:
+            return
 
-        # Type narrow to ensure we only look up valid Code enums
-        if isinstance(msg.header.code, Code) and msg.header.code in hvac_promotions:
-            dev_class = hvac_promotions[msg.header.code]
+        # Dynamically build a flat map of Code -> DevClass from the official schema,
+        # ignoring the verb constraint to capture RQ, W, and RP messages.
+        hvac_code_map: dict[Code, str] = {}
+        for (_, schema_code), dev_class_name in HVAC_KLASS_BY_VC_PAIR.items():
+            hvac_code_map[schema_code] = dev_class_name
 
+        dev_class = hvac_code_map.get(code_enum)
+
+        if dev_class:
             # Promote Source (if the device is transmitting, and NOT a controller)
             if msg.src.id != "--:------" and msg.src.type != "01":
                 self._emit(
