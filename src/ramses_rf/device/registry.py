@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import inspect
 import logging
@@ -55,6 +56,9 @@ class DeviceRegistry:
         self._device_factory_cb = device_factory_cb
         self.devices: list[Device] = []
         self.device_by_id: dict[DeviceIdT, Device] = {}
+
+        # Temporal Process Manager Cache for Eavesdropping
+        self._orphan_telemetry: dict[str, dict[str, Any]] = {}
 
         # INDUSTRY BEST PRACTICE: The Dispatcher (Command) Pattern
         # --------------------------------------------------------
@@ -149,6 +153,7 @@ class DeviceRegistry:
             # Dynamically fetch our CQRS shadow maps (bypassing strict Mypy init checks)
             cqrs_acts: dict[str, set[str]] = getattr(self, "_cqrs_actuators", {})
             cqrs_ufcs: set[str] = getattr(self, "_cqrs_ufcs", set())
+            cqrs_sensors: dict[str, str] = getattr(self, "_cqrs_sensors", {})
 
             dev_type = child_dev.id[:2] if hasattr(child_dev, "id") else None
             is_actuator_hw = dev_type in ("04", "13", "02")
@@ -160,12 +165,17 @@ class DeviceRegistry:
                     z_key = f"{tcs.id}_{metadata['zone_idx']}"
                     cqrs_acts.setdefault(z_key, set()).add(child_dev.id)
 
+                if "zone_idx" in metadata and (device_role == "sensor" or is_sensor):
+                    z_key = f"{tcs.id}_{metadata['zone_idx']}"
+                    cqrs_sensors[z_key] = child_dev.id
+
                 if device_role == "ufc" or dev_type == "02":
                     cqrs_ufcs.add(child_dev.id)
 
             # Save the updated shadow state back to the registry
             self._cqrs_actuators = cqrs_acts
             self._cqrs_ufcs = cqrs_ufcs
+            self._cqrs_sensors = cqrs_sensors
 
             # Try to be polite to the legacy object, but don't care if it fails
             if parent:
@@ -188,53 +198,58 @@ class DeviceRegistry:
         if not event.device_id or not event.metadata:
             return
 
-        old_dev = self.device_by_id.get(event.device_id)
-        if not old_dev:
-            return
-
         new_class_slug = str(event.metadata.get("device_class"))
-        if not new_class_slug or getattr(old_dev, "_SLUG", None) == new_class_slug:
-            return
 
-        # Keep a backup of old traits for rollback
+        slug_map = {
+            "HUM": "rh_sensor",
+            "REM": "switch",
+            "CO2": "co2_sensor",
+            "FAN": "fan",
+        }
+
+        dict_key = new_class_slug.split(".")[-1]
+        final_slug = slug_map.get(dict_key, new_class_slug)
+
+        # 1. ALWAYS update the configuration known_list first
         old_traits_dict = dict(self._config.known_list.get(event.device_id, {}))
 
-        # Update the configuration traits safely
-        traits_dict = dict(old_traits_dict)
-        traits_dict["class"] = new_class_slug
-        self._config.known_list[event.device_id] = traits_dict
+        if old_traits_dict.get("class") != final_slug:
+            traits_dict = dict(old_traits_dict)
+            traits_dict["class"] = final_slug
+            self._config.known_list[event.device_id] = traits_dict
 
-        # Pop the old device from the tracking dictionaries to allow the factory
-        # to safely call _add_device during __init__ without raising a
-        # SchemaInconsistentError
+        # 2. Proceed with dynamic substitution ONLY if the device already exists in memory.
+        old_dev = self.device_by_id.get(event.device_id)
+        if not old_dev or getattr(old_dev, "_SLUG", None) == final_slug:
+            return
+
         self.device_by_id.pop(event.device_id, None)
         self.devices = [d for d in self.devices if d.id != event.device_id]
 
         try:
-            # Instantiate the new strict device class via the factory
             traits = DeviceTraits.from_dict(traits_dict)
             new_dev = self._device_factory_cb(old_dev.addr, None, traits)
 
-            # Migrate essential topological state ONLY if a parent existed
+            # FORCE IT BACK IN: In case the factory doesn't auto-register
+            if new_dev.id not in self.device_by_id:
+                self._add_device(new_dev)
+
             if old_parent := getattr(old_dev, "_parent", None):
                 new_dev._apply_topology_link(old_parent)
 
-            # Migrate CQRS Read-Model State (Shadow state preservation)
             if hasattr(old_dev, "temp_state") and hasattr(new_dev, "temp_state"):
                 new_dev.temp_state = old_dev.temp_state
             if hasattr(old_dev, "demand_state") and hasattr(new_dev, "demand_state"):
                 new_dev.demand_state = old_dev.demand_state
 
             _LOGGER.info(
-                f"Promoted {event.device_id} to {new_class_slug} via {event.causation}"
+                f"Promoted {event.device_id} to {final_slug} via {event.causation}"
             )
         except Exception:
-            # Rollback on failure: pop the failed new_dev out first
             self.device_by_id.pop(event.device_id, None)
             self.devices = [d for d in self.devices if d.id != event.device_id]
             self._add_device(old_dev)
 
-            # Revert the traits dictionary
             self._config.known_list[event.device_id] = old_traits_dict
             raise
 
@@ -277,8 +292,73 @@ class DeviceRegistry:
             )
 
     def _handle_update_traits(self, event: TopologyChangedEvent) -> None:
-        """Update traits for a specific device (Expansion Hook)."""
-        pass
+        """Process stateful eavesdropping correlation (The CQRS Process Manager)."""
+        if not event.device_id or not event.metadata:
+            return
+
+        eavesdrop_type = event.metadata.get("eavesdrop")
+        payload: Any = event.metadata.get("payload", [])
+
+        # Compatibility with older stringified payloads in testing
+        if isinstance(payload, str):
+            with contextlib.suppress(ValueError, SyntaxError):
+                payload = ast.literal_eval(payload)
+
+        # Normalize to list for easy iteration
+        payloads = payload if isinstance(payload, list) else [payload]
+
+        if eavesdrop_type == "orphan_broadcast":
+            # Cache the orphan's latest telemetry for correlation
+            for p in payloads:
+                if not isinstance(p, dict):
+                    continue
+                if "temperature" in p:
+                    self._orphan_telemetry[event.device_id] = p
+                    _LOGGER.debug(
+                        f"Correlator: Cached orphan {event.device_id} temp {p['temperature']}"
+                    )
+
+        elif eavesdrop_type == "controller_sync":
+            # Check if the controller is broadcasting a zone temp matching a known orphan
+            for p in payloads:
+                if not isinstance(p, dict):
+                    continue
+
+                zone_temp = p.get("temperature")
+                zone_idx = p.get("zone_idx")
+
+                if zone_temp is None or zone_idx is None:
+                    continue
+
+                # Find a match in our temporal cache
+                matched_orphan = None
+                for orphan_id, orphan_data in self._orphan_telemetry.items():
+                    if orphan_data.get("temperature") == zone_temp:
+                        matched_orphan = orphan_id
+                        break
+
+                if matched_orphan:
+                    _LOGGER.info(
+                        f"Correlator: Matched orphan {matched_orphan} to Zone {zone_idx}!"
+                    )
+
+                    # Trigger the BIND_DEVICE action natively
+                    bind_event = TopologyChangedEvent(
+                        action=TopologyAction.BIND_DEVICE,
+                        parent_id=event.device_id,
+                        child_id=cast(DeviceIdT, matched_orphan),
+                        metadata={
+                            "zone_idx": str(zone_idx),
+                            "child_id": str(zone_idx),
+                            "device_role": "sensor",
+                            "is_sensor": True,
+                        },
+                        causation="Rule_30C9_Eavesdrop_Correlation",
+                    )
+                    self._handle_bind_device(bind_event)
+
+                    # Clear from cache so we do not double-bind
+                    del self._orphan_telemetry[matched_orphan]
 
     def _add_device(self, dev: Device) -> None:
         """Add a device to the registry.
@@ -505,19 +585,36 @@ class DeviceRegistry:
                 # Inject our perfect mapping to override the legacy object's missing data
                 cqrs_acts: dict[str, set[str]] = getattr(self, "_cqrs_actuators", {})
                 cqrs_ufcs: set[str] = getattr(self, "_cqrs_ufcs", set())
+                cqrs_sensors: dict[str, str] = getattr(self, "_cqrs_sensors", {})
 
-                for z_idx, z_dict in tcs_schema.get("zones", {}).items():
+                zones_dict = tcs_schema.setdefault("zones", {})
+
+                # PRE-FILL: Force-inject any zones discovered purely via CQRS
+                # (protects against legacy topology failure dropping the zone entirely)
+                for z_key in list(cqrs_acts.keys()) + list(cqrs_sensors.keys()):
+                    if z_key.startswith(f"{tcs.id}_"):
+                        z_idx = z_key.split("_")[1]
+                        if z_idx not in zones_dict:
+                            zones_dict[z_idx] = {}
+
+                for z_idx, z_dict in zones_dict.items():
                     z_key = f"{tcs.id}_{z_idx}"
+
+                    # Inject CQRS Actuators
                     if z_key in cqrs_acts:
                         current = set(z_dict.get("actuators", []))
                         native = cqrs_acts[z_key]
                         if native - current:
-                            z_dict["actuators"] = sorted(native.union(current))
+                            z_dict["actuators"] = sorted(list(native.union(current)))
+
+                    # Inject CQRS Sensor
+                    if z_key in cqrs_sensors:
+                        z_dict["sensor"] = cqrs_sensors[z_key]
 
                 schema[tcs.id] = tcs_schema
 
                 # Extract all successfully bound devices from the generated TCS schema
-                for _, zone_data in tcs_schema.get("zones", {}).items():
+                for _, zone_data in zones_dict.items():
                     bound_devices.update(zone_data.get("actuators", []))
                     if zone_data.get("sensor"):
                         bound_devices.add(zone_data["sensor"])

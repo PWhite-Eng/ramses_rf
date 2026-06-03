@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from ramses_rf.const import I_, SZ_DOMAIN_ID, SZ_UFH_IDX, SZ_ZONE_IDX, Code, DevType
 from ramses_rf.enums import TopologyAction
@@ -75,6 +75,15 @@ class TopologyBuilder:
                 # quirk rule must not bring down the discovery pipeline.
                 _LOGGER.error(f"Error evaluating topology rule {rule.__name__}: {err}")
 
+    def _get_payloads(self, msg: Message) -> list[Any]:
+        """Safely extract the array or standard dictionary payload."""
+        raw: Any = getattr(msg, "payload", getattr(msg, "data", {}))
+        if isinstance(raw, dict):
+            return cast("list[Any]", raw.get("_array", [raw]))
+        if isinstance(raw, list):
+            return raw
+        return []
+
     def _evaluate_evohome_rules(self, msg: Message) -> None:
         """Evaluate rules specific to the Evohome CH/DHW ecosystem.
 
@@ -87,7 +96,10 @@ class TopologyBuilder:
         if not self._enable_eavesdrop:
             return
 
-        if msg.header.verb == I_ and msg.header.code in CODES_ONLY_FROM_CTL:
+        if (
+            getattr(msg, "verb", None) == I_
+            and getattr(msg, "code", None) in CODES_ONLY_FROM_CTL
+        ):
             event = TopologyChangedEvent(
                 action=TopologyAction.CREATE_CONTROLLER,
                 device_id=msg.src.id,
@@ -101,11 +113,11 @@ class TopologyBuilder:
         :param msg: The immutable Message L7 envelope to evaluate.
         """
         # EXPLICIT BINDING: Controllers (01) broadcasting 000C device maps
-        if msg.header.code == Code._000C and msg.src.type == "01":
-            # Safely extract array from strict L7 data envelope
-            payloads = msg.data.get("_array", [msg.data])
-
-            for p in payloads:
+        if (
+            getattr(msg, "code", None) == Code._000C
+            and getattr(msg.src, "type", None) == "01"
+        ):
+            for p in self._get_payloads(msg):
                 if not isinstance(p, dict):
                     continue
 
@@ -158,54 +170,50 @@ class TopologyBuilder:
     def _evaluate_directed_telemetry_rules(self, msg: Message) -> None:
         """Evaluate implicit bindings from directed telemetry broadcasts.
 
-        Devices (TRVs, Thermostats, DHW sensors) explicitly declare their
-        topological relationships by broadcasting telemetry directly to
-        their parent Controller, or via addr3 broadcasts.
+        Devices explicitly declare their topological relationships by broadcasting
+        telemetry directly to their parent Controller, or via addr3 broadcasts.
 
         :param msg: The immutable Message L7 envelope to evaluate.
         """
         if not self._enable_eavesdrop:
             return
 
-        BINDING_CODES = (
-            Code._2309,
-            Code._3150,
-            Code._30C9,
-            Code._0008,
-            Code._0004,
-            Code._1260,
-            Code._10A0,
-            Code._12B0,
-            Code._000A,
-            Code._2349,
-        )
-
         # Identify the Controller ID whether it is a directed target or a broadcast addr3 target
         ctl_id = None
-        if msg.dst.type == "01":
+        if getattr(msg.dst, "type", None) == "01":
             ctl_id = msg.dst.id
         elif getattr(msg.addr3, "type", None) == "01":
             ctl_id = msg.addr3.id
 
-        if msg.header.verb == I_ and ctl_id and msg.src.id != ctl_id:
-            if msg.header.code not in BINDING_CODES:
-                return
-
-            payloads = msg.data.get("_array", [msg.data])
-
-            for p in payloads:
+        if getattr(msg, "verb", None) == I_ and ctl_id and msg.src.id != ctl_id:
+            # Bypass hardcoded Code limitations. If the parsed payload contains a zone_idx,
+            # and is routed to the controller, it implies a binding relationship.
+            for p in self._get_payloads(msg):
                 if not isinstance(p, dict):
                     continue
 
                 zone_idx = p.get(SZ_ZONE_IDX)
                 domain_id = p.get(SZ_DOMAIN_ID)
 
+                if zone_idx is None and domain_id is None:
+                    continue  # Nothing to bind
+
                 metadata: dict[str, Any] = {}
 
-                # Explicitly flag actuators vs sensors for the registry
-                if msg.header.code in (Code._3150, Code._0008, Code._2309, Code._000A):
+                # Determine Device Role (Fallback to hardware prefix inference)
+                is_actuator = getattr(msg.src, "type", None) in ("04", "08", "13", "02")
+                is_sensor = getattr(msg.src, "type", None) in (
+                    "00",
+                    "03",
+                    "12",
+                    "22",
+                    "34",
+                )
+
+                msg_code = getattr(msg, "code", None)
+                if msg_code in (Code._3150, Code._0008, Code._2309, Code._000A):
                     metadata["device_role"] = "actuator"
-                elif msg.header.code in (
+                elif msg_code in (
                     Code._30C9,
                     Code._1260,
                     Code._10A0,
@@ -213,6 +221,10 @@ class TopologyBuilder:
                 ):
                     metadata["device_role"] = "sensor"
                     metadata["is_sensor"] = "True"
+                else:
+                    metadata["device_role"] = "actuator" if is_actuator else "sensor"
+                    if is_sensor:
+                        metadata["is_sensor"] = "True"
 
                 if zone_idx is not None:
                     metadata["zone_idx"] = str(zone_idx)
@@ -225,8 +237,6 @@ class TopologyBuilder:
                         metadata["zone_idx"] = str(domain_id)
                         metadata["domain_id"] = str(domain_id)
                         metadata["child_id"] = str(domain_id)
-                else:
-                    continue  # Nothing to bind
 
                 self._emit(
                     TopologyChangedEvent(
@@ -234,7 +244,7 @@ class TopologyBuilder:
                         parent_id=ctl_id,
                         child_id=msg.src.id,
                         metadata=metadata,
-                        causation="Rule_Telemetry_Eavesdrop_Binding",
+                        causation=f"Rule_Telemetry_Eavesdrop_{msg_code}",
                     )
                 )
 
@@ -248,11 +258,14 @@ class TopologyBuilder:
         :param msg: The immutable Message L7 envelope to evaluate.
         """
         # Prefix Guard: Ensure the source is an Underfloor Heating Controller
-        if msg.src.type != "02" or msg.header.code != Code._000C:
+        if (
+            getattr(msg.src, "type", None) != "02"
+            or getattr(msg, "code", None) != Code._000C
+        ):
             return
 
         # UFC 000C packets are addressed directly to the parent Controller
-        ctl_id = msg.dst.id if msg.dst.type == "01" else None
+        ctl_id = msg.dst.id if getattr(msg.dst, "type", None) == "01" else None
 
         ufc_id = msg.src.id
 
@@ -269,9 +282,7 @@ class TopologyBuilder:
             )
 
         # 2. Create the Circuit and map it to the Zone
-        payloads = msg.data.get("_array", [msg.data])
-
-        for p in payloads:
+        for p in self._get_payloads(msg):
             if not isinstance(p, dict):
                 continue
 
@@ -303,8 +314,12 @@ class TopologyBuilder:
         if not self._enable_eavesdrop:
             return
 
+        msg_code = getattr(msg, "code", None)
+        if not isinstance(msg_code, str):
+            return
+
         try:
-            code_enum = Code(msg.header.code)
+            code_enum = Code(msg_code)
         except ValueError:
             return
 
@@ -318,7 +333,7 @@ class TopologyBuilder:
 
         if dev_class:
             # Promote Source (if the device is transmitting, and NOT a controller)
-            if msg.src.id != "--:------" and msg.src.type != "01":
+            if msg.src.id != "--:------" and getattr(msg.src, "type", None) != "01":
                 self._emit(
                     TopologyChangedEvent(
                         action=TopologyAction.PROMOTE_CLASS,
@@ -332,7 +347,7 @@ class TopologyBuilder:
             if (
                 msg.dst.id != "--:------"
                 and msg.dst.id != msg.src.id
-                and msg.dst.type != "01"
+                and getattr(msg.dst, "type", None) != "01"
             ):
                 self._emit(
                     TopologyChangedEvent(
@@ -354,8 +369,10 @@ class TopologyBuilder:
         if not self._enable_eavesdrop:
             return
 
+        msg_code = getattr(msg, "code", None)
+
         # Prefix Guard: Prevent cross-promotion (e.g., OTB sending 1260)
-        if msg.header.code == Code._3220 and msg.src.type == "10":
+        if msg_code == Code._3220 and getattr(msg.src, "type", None) == "10":
             event = TopologyChangedEvent(
                 action=TopologyAction.PROMOTE_CLASS,
                 device_id=msg.src.id,
@@ -364,7 +381,10 @@ class TopologyBuilder:
             )
             self._emit(event)
 
-        elif msg.header.code in (Code._1260, Code._10A0) and msg.src.type == "07":
+        elif (
+            msg_code in (Code._1260, Code._10A0)
+            and getattr(msg.src, "type", None) == "07"
+        ):
             event = TopologyChangedEvent(
                 action=TopologyAction.PROMOTE_CLASS,
                 device_id=msg.src.id,
@@ -419,9 +439,12 @@ class TopologyBuilder:
             return
 
         # Guard: Catch direct commands from the Controller (01) to a Relay (13)
-        if msg.src.type == "01" and msg.dst and msg.dst.type == "13":
+        if (
+            getattr(msg.src, "type", None) == "01"
+            and getattr(msg.dst, "type", None) == "13"
+        ):
             # 1100 (Boiler Params) or 10E0/1FC9 (Binding) are direct links
-            if msg.header.code in (Code._1100, Code._10E0, Code._1FC9):
+            if getattr(msg, "code", None) in (Code._1100, Code._10E0, Code._1FC9):
                 event = TopologyChangedEvent(
                     action=TopologyAction.BIND_DEVICE,
                     parent_id=msg.src.id,
@@ -443,30 +466,36 @@ class TopologyBuilder:
         if not self._enable_eavesdrop:
             return
 
+        raw_payload = getattr(msg, "payload", getattr(msg, "data", {}))
+        msg_verb = getattr(msg, "verb", None)
+        msg_code = getattr(msg, "code", None)
+
         # Catch Controller Sync Array (30C9 from 01 to --:------ or specific)
         if (
-            msg.header.verb == I_
-            and msg.header.code == Code._30C9
-            and msg.src.type == "01"
+            msg_verb == I_
+            and msg_code == Code._30C9
+            and getattr(msg.src, "type", None) == "01"
         ):
             event = TopologyChangedEvent(
                 action=TopologyAction.UPDATE_TRAITS,
                 device_id=msg.src.id,
-                metadata={"eavesdrop": "controller_sync", "payload": str(msg.data)},
+                metadata={
+                    "eavesdrop": "controller_sync",
+                    "payload": raw_payload,  # type: ignore[dict-item]
+                },
                 causation="Rule_30C9_Controller_Sync",
             )
             self._emit(event)
 
         # Catch Orphan Sensor Broadcast (30C9 from sensors to themselves)
-        elif (
-            msg.header.verb == I_
-            and msg.header.code == Code._30C9
-            and msg.dst.id == msg.src.id
-        ):
+        elif msg_verb == I_ and msg_code == Code._30C9 and msg.dst.id == msg.src.id:
             event = TopologyChangedEvent(
                 action=TopologyAction.UPDATE_TRAITS,
                 device_id=msg.src.id,
-                metadata={"eavesdrop": "orphan_broadcast", "payload": str(msg.data)},
+                metadata={
+                    "eavesdrop": "orphan_broadcast",
+                    "payload": raw_payload,  # type: ignore[dict-item]
+                },
                 causation="Rule_30C9_Orphan_Broadcast",
             )
             self._emit(event)
@@ -487,7 +516,8 @@ class TopologyBuilder:
             return
 
         # 1. We only care about explicit, directed requests/writes
-        if msg.header.verb not in ("RQ", " W"):
+        msg_verb = getattr(msg, "verb", None)
+        if msg_verb not in ("RQ", " W"):
             return
 
         # 2. The source MUST be a Controller
@@ -496,7 +526,8 @@ class TopologyBuilder:
 
         # 3. The target MUST be a valid Heating Domain device
         # (00 = Zone Sensor, 04 = TRV, 08 = Relay/BDR91)
-        if getattr(msg.dst, "type", None) not in ("00", "04", "08"):
+        dst_type = getattr(msg.dst, "type", None)
+        if dst_type not in ("00", "04", "08"):
             return
 
         # Emit the topology mutation event. The downstream Registry
@@ -506,7 +537,7 @@ class TopologyBuilder:
             parent_id=msg.src.id,
             child_id=msg.dst.id,
             metadata={
-                "device_role": "actuator" if msg.dst.type in ("04", "08") else "sensor"
+                "device_role": "actuator" if dst_type in ("04", "08") else "sensor"
             },
             causation="Rule_Implicit_Poll_Binding",
         )
@@ -527,21 +558,18 @@ class TopologyBuilder:
         if not self._enable_eavesdrop:
             return
 
-        if msg.header.verb != I_:
+        if getattr(msg, "verb", None) != I_:
             return
 
         # Pure L7 architectural access using the new Domain property
-        if getattr(msg.addr3, "type", None) == "01" and getattr(
-            msg.src, "type", None
-        ) in ("00", "04", "08"):
+        src_type = getattr(msg.src, "type", None)
+        if getattr(msg.addr3, "type", None) == "01" and src_type in ("00", "04", "08"):
             event = TopologyChangedEvent(
                 action=TopologyAction.BIND_DEVICE,
                 parent_id=msg.addr3.id,
                 child_id=msg.src.id,
                 metadata={
-                    "device_role": "actuator"
-                    if msg.src.type in ("04", "08")
-                    else "sensor"
+                    "device_role": "actuator" if src_type in ("04", "08") else "sensor"
                 },
                 causation="Rule_3rd_Address_Declaration",
             )
