@@ -13,29 +13,17 @@ from ramses_rf import exceptions as exc
 from ramses_rf.address import Address
 from ramses_rf.const import (
     DEV_ROLE_MAP,
-    DEV_TYPE_MAP,
-    SZ_DHW_IDX,
-    SZ_DOMAIN_ID,
     SZ_HEAT_DEMAND,
     SZ_NAME,
     SZ_RELAY_DEMAND,
     SZ_SETPOINT,
     SZ_TEMPERATURE,
-    SZ_ZONE_IDX,
-    SZ_ZONE_TYPE,
     ZON_MODE_MAP,
     ZON_ROLE_MAP,
     DevRole,
     ZoneRole,
 )
-from ramses_rf.devices import (
-    BdrSwitch,
-    Controller,
-    Device,
-    DhwSensor,
-    TrvActuator,
-    UfhController,
-)
+from ramses_rf.devices import BdrSwitch, Controller, Device, DhwSensor
 from ramses_rf.entity import Entity, class_by_attr
 from ramses_rf.helpers import shrink
 from ramses_rf.models import (
@@ -51,7 +39,6 @@ from ramses_rf.schemas import (
     SCH_TCS_ZONES_ZON,
     SZ_ACTUATORS,
     SZ_CLASS,
-    SZ_DEVICES,
     SZ_DHW_VALVE,
     SZ_HTG_VALVE,
     SZ_SENSOR,
@@ -73,15 +60,10 @@ if TYPE_CHECKING:
 from ramses_rf.const import (  # noqa: F401, isort: skip
     F9,
     FA,
-    FC,
-    FF,
 )
 
 from ramses_rf.const import (  # noqa: F401, isort: skip
-    I_,
-    RP,
     RQ,
-    W_,
     Code,
 )
 
@@ -173,12 +155,6 @@ class ZoneSchedule(ZoneBase):  # 0404
 
         self._schedule = Schedule(self)  # type: ignore[arg-type]
 
-    def _handle_msg(self, msg: Message) -> None:
-        super()._handle_msg(msg)
-
-        if msg.code in (Code._0006, Code._0404):
-            self._schedule._handle_msg(msg)
-
     async def get_schedule(self, *, force_io: bool = False) -> InnerScheduleT | None:
         await self._schedule.get_schedule(force_io=force_io)
         return self.schedule
@@ -247,98 +223,6 @@ class DhwZone(ZoneSchedule):  # CS92A
         self.discovery.add_cmd(Command.get_dhw_params(self.ctl.id), 60 * 60 * 6)
         self.discovery.add_cmd(Command.get_dhw_mode(self.ctl.id), 60 * 5)
         self.discovery.add_cmd(Command.get_dhw_temp(self.ctl.id), 60 * 15)
-
-    def _handle_msg(self, msg: Message) -> None:
-        # def eavesdrop_dhw_sensor(
-        #     this: Message, *, prev: Message | None = None
-        # ) -> None:
-        # """Eavesdrop packets, or pairs of packets, to maintain the
-        # system state.
-        #
-        # There are only 2 ways to find a controller's DHW sensor:
-        # 1. The 10A0 RQ/RP *from/to a 07:* (1x/4h) - reliable
-        # 2. Use sensor temp matching - non-deterministic
-        #
-        # Data from the CTL is considered more authoritative. The RQ is
-        # initiated by the DHW, so is not authoritative. The I/1260 is
-        # not to/from a controller, so is not useful.
-        # """
-
-        # # 10A0: RQ/07/01, RP/01/07: can get both parent controller &
-        # DHW sensor
-        # # 047 RQ --- 07:030741 01:102458 --:------ 10A0 006 00181F0003E4
-        # # 062 RP --- 01:102458 07:030741 --:------ 10A0 006 0018380003E8
-
-        # # 1260: I/07: can't get parent controller - would need match
-        # # temps
-        # # 045  I --- 07:045960 --:------ 07:045960 1260 003 000911
-
-        # # 1F41: I/01: get parent controller, but not DHW sensor
-        # # 045  I --- 01:145038 --:------ 01:145038 1F41 012 000004FFFFFF1E060E0507E4
-        # # 045  I --- 01:145038 --:------ 01:145038 1F41 006 000002FFFFFF
-
-        # assert self._gwy.config.enable_eavesdrop, "Coding error"
-
-        # if all(
-        #     (
-        #         this.code == Code._10A0,
-        #         this.verb == RP,
-        #         this.src is self.ctl,
-        #         isinstance(this.dst, DhwSensor),
-        #     )
-        # ):
-        #     self._get_dhw(sensor=this.dst)
-
-        assert (
-            msg.src == self.ctl
-            and msg.code
-            in (
-                Code._0005,
-                Code._000C,
-                Code._10A0,
-                Code._1260,
-                Code._1F41,
-            )
-            or msg.payload.get(SZ_DOMAIN_ID) in (F9, FA)
-            or msg.payload.get(SZ_ZONE_IDX) == "HW"
-            or msg.payload.get(SZ_DHW_IDX) is not None
-        ), f"msg inappropriately routed to {self}"
-
-        super()._handle_msg(msg)
-
-        if (
-            msg.code != Code._000C
-            or msg.payload.get(SZ_ZONE_TYPE) not in (DEV_ROLE_MAP.DHW, DEV_ROLE_MAP.HTG)
-            or not msg.payload.get(SZ_DEVICES)
-        ):
-            return
-
-        devices = msg.payload.get(SZ_DEVICES, [])
-        if not devices:
-            return
-
-        assert len(devices) == 1
-
-        try:
-            self._gwy.device_registry.get_device(
-                devices[0],
-                parent=self,
-                child_id=msg.payload.get(SZ_DOMAIN_ID),
-                is_sensor=(msg.payload.get(SZ_ZONE_TYPE) == DEV_ROLE_MAP.DHW),
-            )  # sets self._dhw_sensor/_dhw_valve/_htg_valve
-        except (
-            exc.DeviceNotFoundError,
-            exc.SchemaInconsistentError,
-            exc.SystemSchemaInconsistent,
-        ) as err:
-            _TRACE.warning(
-                f"SUPPRESSED in DhwZone 000C handler: {err}. Packet dropped."
-            )
-
-        # TODO: may need to move earlier in method
-        # # If still don't have a sensor, can eavesdrop 10A0
-        # if self._gwy.config.enable_eavesdrop and not self.dhw_sensor:
-        #     eavesdrop_dhw_sensor(msg)
 
     def _update_schema(self, **schema: Any) -> None:
         """Update a DHW zone with new schema attrs.
@@ -500,14 +384,6 @@ class DhwZone(ZoneSchedule):  # CS92A
     ) -> Packet:
         """Set the DHW parameters (setpoint, overrun, differential)."""
 
-        # dhw_params = self.entity_state.get_value(Code._10A0)
-        # if setpoint is None:
-        #     setpoint = dhw_params[SZ_SETPOINT]
-        # if overrun is None:
-        #     overrun = dhw_params["overrun"]
-        # if differential is None:
-        #     setpoint = dhw_params["differential"]
-
         cmd = Command.set_dhw_params(
             self.ctl.id,
             setpoint=setpoint,
@@ -584,53 +460,7 @@ class Zone(ZoneSchedule):
         existing schema.
         """
 
-        def set_zone_type(zone_type: str) -> None:
-            """Set the zone's type (e.g. '08'), after validating it.
-
-            There are two possible sources for the type of a zone:
-            1. eavesdropping packet codes
-            2. analyzing child devices
-            """
-
-            if zone_type in (ZON_ROLE_MAP.ACT, ZON_ROLE_MAP.SEN):
-                return  # generic zone classes
-            if zone_type not in ZON_ROLE_MAP.HEAT_ZONES:
-                raise exc.SchemaInconsistentError(f"Invalid zone type: {zone_type}")
-
-            klass = ZON_ROLE_MAP.slug(zone_type)  # not incl. DHW?
-
-            if klass == self._SLUG:
-                return
-
-            if klass == ZoneRole.VAL and self._SLUG not in (
-                None,
-                ZoneRole.ELE,
-            ):
-                raise exc.SchemaInconsistentError(
-                    f"Not a compatible zone class for {self}: {zone_type}"
-                )
-
-            elif klass not in ZONE_CLASS_BY_SLUG:
-                raise exc.SchemaInconsistentError(
-                    f"Not a known zone class (for {self}): {zone_type}"
-                )
-
-            if self._SLUG is not None:
-                raise exc.SystemSchemaInconsistent(
-                    f"{self} changed zone class: from {self._SLUG} to {klass}"
-                )
-
-            self.__class__ = cast("type[Zone]", ZONE_CLASS_BY_SLUG[klass])
-            _LOGGER.debug("Promoted a Zone: %s (%s)", self.id, self.__class__)
-
-            self._setup_discovery_cmds()
-
-        # if schema.get(SZ_CLASS) == ZON_ROLE_MAP[ZON_ROLE.ACT]:
-        #     schema.pop(SZ_CLASS)
         schema = shrink(SCH_TCS_ZONES_ZON(schema))
-
-        if klass := schema.get(SZ_CLASS):
-            set_zone_type(ZON_ROLE_MAP[klass])
 
         if sensor_id := schema.get(SZ_SENSOR):
             try:
@@ -712,148 +542,6 @@ class Zone(ZoneSchedule):
         ):
             self.discovery.cmds.pop(HeaderT(f"{self.idx}{ZON_ROLE_MAP.ELE}"), [])
             _LOGGER.warning("inferior header removed from discovery")
-
-    def _handle_msg(self, msg: Message) -> None:
-        def eavesdrop_zone_type(this: Message, *, prev: Message | None = None) -> None:
-            """Determine the type of a zone by eavesdropping.
-            There are three ways to determine the type of a zone:
-            1. Use a 0005 packet (deterministic)
-            2. Eavesdrop (non-deterministic, slow to converge)
-            3. via a config file (a schema)
-            """
-            # ELE/VAL, but not UFH (it seems)
-            if this.code in (Code._0008, Code._0009):
-                assert self._SLUG in (
-                    None,
-                    ZoneRole.ELE,
-                    ZoneRole.VAL,
-                    ZoneRole.MIX,
-                ), self._SLUG
-
-                if self._SLUG is None:
-                    # this might eventually be: ZON_ROLE.VAL
-                    self._update_schema(**{SZ_CLASS: ZON_ROLE_MAP[ZoneRole.ELE]})
-
-            elif this.code == Code._3150:  # TODO: and this.verb in (I_, RP)?
-                # MIX/ELE don't 3150
-                assert self._SLUG in (
-                    None,
-                    ZoneRole.RAD,
-                    ZoneRole.UFH,
-                    ZoneRole.VAL,
-                ), self._SLUG
-
-                src = cast("Any", this.src)
-                if isinstance(src, TrvActuator):
-                    self._update_schema(**{SZ_CLASS: ZON_ROLE_MAP[ZoneRole.RAD]})
-                elif isinstance(src, BdrSwitch):
-                    self._update_schema(**{SZ_CLASS: ZON_ROLE_MAP[ZoneRole.VAL]})
-                elif isinstance(src, UfhController):
-                    self._update_schema(**{SZ_CLASS: ZON_ROLE_MAP[ZoneRole.UFH]})
-
-            # DEX
-            assert (
-                msg.src == self.ctl
-                or getattr(msg.src, "type", None) in (DEV_TYPE_MAP.UFC, "04")
-            ) and (
-                isinstance(msg.payload, dict)
-                or [d for d in msg.payload if d.get(SZ_ZONE_IDX) == self.idx]
-            ), f"msg inappropriately routed to {self}"
-
-        # DEX
-        assert (
-            msg.src == self.ctl
-            or getattr(msg.src, "type", None)
-            in ("02", "03", "04", "08", "12", "13", "18", "22", "30", "34")
-        ) and (
-            isinstance(msg.payload, list)
-            or msg.code == Code._0005
-            or (
-                isinstance(msg.payload, dict)
-                and msg.payload.get(SZ_ZONE_IDX, self.idx) == self.idx
-            )
-        ), f"msg inappropriately routed to {self}"
-
-        super()._handle_msg(msg)
-
-        if msg.code == Code._0004:
-            if isinstance(msg.payload, dict):
-                if SZ_NAME in msg.payload:
-                    self._name = str(msg.payload[SZ_NAME])
-            elif isinstance(msg.payload, list):
-                for d in msg.payload:
-                    if (
-                        isinstance(d, dict)
-                        and d.get(SZ_ZONE_IDX) == self.idx
-                        and SZ_NAME in d
-                    ):
-                        self._name = str(d[SZ_NAME])
-
-        if msg.code == Code._000C:
-            devices = msg.payload.get(SZ_DEVICES, [])
-            if not devices:
-                return
-
-            zone_type = msg.payload.get(SZ_ZONE_TYPE)
-
-            if zone_type == DEV_ROLE_MAP.SEN:
-                dev_id = devices[0]
-                try:
-                    self._sensor = self._gwy.device_registry.get_device(
-                        dev_id, parent=self, is_sensor=True
-                    )
-                except (
-                    exc.DeviceNotFoundError,
-                    exc.SchemaInconsistentError,
-                    exc.SystemSchemaInconsistent,
-                ) as err:
-                    _TRACE.warning(
-                        f"SUPPRESSED in Zone 000C handler (sensor): {err}. "
-                        f"Packet dropped."
-                    )
-
-            elif zone_type == DEV_ROLE_MAP.ACT:
-                for dev_id in devices:
-                    try:
-                        self._gwy.device_registry.get_device(dev_id, parent=self)
-                    except (
-                        exc.DeviceNotFoundError,
-                        exc.SchemaInconsistentError,
-                        exc.SystemSchemaInconsistent,
-                    ) as err:
-                        _TRACE.warning(
-                            f"SUPPRESSED in Zone 000C handler (actuator): {err}. "
-                            f"Packet dropped."
-                        )
-
-            elif zone_type in ZON_ROLE_MAP.HEAT_ZONES:
-                for dev_id in devices:
-                    try:
-                        self._gwy.device_registry.get_device(dev_id, parent=self)
-                    except (
-                        exc.DeviceNotFoundError,
-                        exc.SchemaInconsistentError,
-                        exc.SystemSchemaInconsistent,
-                    ) as err:
-                        _TRACE.warning(
-                            f"SUPPRESSED in Zone 000C handler (heat_actuator): {err}. "
-                            f"Packet dropped."
-                        )
-                self._update_schema(**{SZ_CLASS: ZON_ROLE_MAP[zone_type]})
-
-            # TODO: testing this concept, hoping to learn device_id of UFC
-            # if msg.payload[SZ_ZONE_TYPE] == DEV_ROLE_MAP.UFH:
-            #     cmd = Command.from_attrs(
-            #         RQ, self.ctl.id, Code._000C, f"{self.idx}{DEV_ROLE_MAP.UFH}"
-            #     )
-            #     self._send_cmd(cmd)
-
-        # If zone still doesn't have a zone class, maybe eavesdrop?
-        if self._gwy.config.enable_eavesdrop and self._SLUG in (
-            None,
-            ZoneRole.ELE,
-        ):
-            eavesdrop_zone_type(msg)
 
     @property
     def sensor(self) -> Device | None:
@@ -1092,17 +780,6 @@ class EleZone(Zone):  # BDR91A/T  # TODO: 0008/0009/3150
 
     _SLUG: str | None = ZoneRole.ELE
     _ROLE_ACTUATORS: str = DEV_ROLE_MAP.ELE
-
-    def _handle_msg(self, msg: Message) -> None:
-        super()._handle_msg(msg)
-
-        # ZON zones are ELE zones that also call for heat
-        # if msg.code == Code._0008:
-        #     self._update_schema(**{SZ_CLASS: ZON_ROLE_MAP[ZoneRole.VAL]})
-        if msg.code == Code._3150:
-            raise exc.SystemInconsistent("EleZone cannot process 3150 (heat demand)")
-        elif msg.code == Code._3EF0:
-            raise exc.SystemInconsistent("EleZone cannot process 3EF0")
 
     async def heat_demand(self) -> float | None:
         """Return 0 as the zone's heat demand, as electric zones don't

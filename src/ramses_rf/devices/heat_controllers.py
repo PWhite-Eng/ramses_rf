@@ -8,23 +8,15 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from ramses_rf.const import (
     DEV_ROLE_MAP,
     FA,
-    FC,
     RQ,
-    SZ_DOMAIN_ID,
     SZ_HEAT_DEMAND,
     SZ_RELAY_DEMAND,
-    SZ_UFH_IDX,
-    SZ_ZONE_IDX,
-    SZ_ZONE_MASK,
-    SZ_ZONE_TYPE,
-    ZON_ROLE_MAP,
     Code,
     DevType,
 )
 from ramses_rf.entity import Entity
-from ramses_rf.helpers import shrink
 from ramses_rf.models import DeviceTraits
-from ramses_rf.schemas import SCH_TCS, SZ_CIRCUITS
+from ramses_rf.schemas import SZ_CIRCUITS
 from ramses_rf.topology import Child, Parent
 from ramses_tx import Command
 from ramses_tx.typing import DeviceIdT, DevIndexT, PayloadT
@@ -54,13 +46,10 @@ class Controller(DeviceHeat):  # CTL (01):
         super().__init__(*args, traits=traits, **kwargs)
 
         self.tcs: Evohome | None = None  # TODO: = self?
-        self._make_tcs_controller(**kwargs)  # NOTE: must create_from_schema first
 
     def _post_class_promote(self) -> None:
         """Initialize CTL state when promoted in-place from a generic device."""
         self.__dict__.setdefault("tcs", None)
-        if not self.tcs:
-            self._make_tcs_controller()
 
     def _setup_discovery_cmds(self) -> None:
         super()._setup_discovery_cmds()
@@ -70,44 +59,6 @@ class Controller(DeviceHeat):  # CTL (01):
                 Command.from_attrs(RQ, self.id, Code._2E04, PayloadT("00")),
                 60 * 60,  # Poll every 60 minutes after initial startup query
             )
-
-    def _handle_msg(self, msg: Message) -> None:
-        super()._handle_msg(msg)
-
-        if self.tcs:
-            self.tcs._handle_msg(msg)
-
-    def _make_tcs_controller(
-        self, *, msg: Message | None = None, **schema: Any
-    ) -> None:  # CH/DHW
-        """Attach a TCS (create/update as required) after passing it any msg."""
-
-        def get_system(*, msg: Message | None = None, **schema: Any) -> Evohome:
-            """Return a TCS (temperature control system), create it if required.
-
-            Use the schema to create/update it, then pass it any msg to handle.
-
-            TCSs are uniquely identified by a controller ID.
-            If a TCS is created, attach it to this device (which should be a CTL).
-            """
-
-            from ramses_rf.systems import system_factory
-
-            schema = shrink(SCH_TCS(schema))
-
-            if not self.tcs:
-                self.tcs = cast("Evohome", system_factory(self, msg=msg, **schema))
-
-            elif schema and self.tcs:
-                self.tcs._update_schema(**schema)
-
-            if msg and self.tcs:
-                self.tcs._handle_msg(msg)
-            return self.tcs
-
-        super()._make_tcs_controller(msg=None, **schema)
-
-        self.tcs = get_system(msg=msg, **schema)
 
 
 class Programmer(Controller):  # PRG (23):
@@ -194,76 +145,6 @@ class UfhController(Parent, DeviceHeat):  # UFC (02):
             payload = PayloadT(f"{ufc_idx:02X}{DEV_ROLE_MAP.UFH}")
             cmd = Command.from_attrs(RQ, self.id, Code._000C, payload)
             self.discovery.add_cmd(cmd, 60 * 60 * 24)
-
-    def _handle_msg(self, msg: Message) -> None:
-        super()._handle_msg(msg)
-
-        # Several assumptions are made, regarding 000C pkts:
-        # - UFC bound only to CTL (not, e.g. SEN)
-        # - all circuits bound to the same controller
-
-        if msg.code == Code._0005:  # system_zones
-            # {'zone_type': '09', 'zone_mask':[1, 1, 1, 1, 1, 0, 0, 0], 'zone_class': 'underfloor_heating'}
-
-            if msg.payload.get(SZ_ZONE_TYPE) not in (
-                ZON_ROLE_MAP.ACT,
-                ZON_ROLE_MAP.UFH,
-            ):
-                return  # ignoring ZON_ROLE_MAP.SEN for now
-
-            for idx, flag in enumerate(msg.payload.get(SZ_ZONE_MASK, [])):
-                ufh_idx = f"{idx:02X}"
-                if not flag:
-                    self.circuit_by_id[ufh_idx] = {SZ_ZONE_IDX: None}
-                # FIXME: this causing tests to fail when read-only protocol
-                # elif SZ_ZONE_IDX not in self.circuit_by_id[ufh_idx]:
-                #     cmd = Command.from_attrs(
-                #         RQ, self.ctl.id, Code._000C, f"{ufh_idx}{DEV_ROLE_MAP.UFH}"
-                #     )
-                #     self._send_cmd(cmd)
-
-        elif msg.code == Code._0008:  # relay_demand
-            if msg.payload.get(SZ_DOMAIN_ID) == FC:
-                pass
-            else:  # FA
-                pass
-
-        elif msg.code == Code._000C:  # zone_devices
-            # {'zone_type': '09', 'ufh_idx': '00', 'zone_idx': '09', 'device_role': 'ufh_actuator', 'devices':['01:095421']}
-            # {'zone_type': '09', 'ufh_idx': '07', 'zone_idx': None, 'device_role': 'ufh_actuator', 'devices':[]}
-
-            if msg.payload.get(SZ_ZONE_TYPE) not in (
-                ZON_ROLE_MAP.ACT,
-                ZON_ROLE_MAP.UFH,
-            ):
-                return  # ignoring ZON_ROLE_MAP.SEN for now
-
-            ufh_idx = msg.payload.get(SZ_UFH_IDX)  # circuit idx
-            if ufh_idx is None:
-                return
-            # Read-Model Update ONLY. No `self.set_parent()` graph mutation here.
-            self.circuit_by_id[ufh_idx] = {SZ_ZONE_IDX: msg.payload.get(SZ_ZONE_IDX)}
-
-        elif msg.code == Code._22C9:  # setpoint_bounds
-            # .I --- 02:017205 --:------ 02:017205 22C9 024 00076C0A280101076C0A28010...
-            # .I --- 02:017205 --:------ 02:017205 22C9 006 04076C0A2801
-            pass
-
-        elif msg.code == Code._3150:  # heat_demands
-            if isinstance(msg.payload, list):  # the circuit demands
-                pass
-            elif msg.payload.get(SZ_DOMAIN_ID) == FC:
-                pass
-            else:
-                zone_idx = msg.payload.get(SZ_ZONE_IDX)
-                msg_dst_tcs = getattr(msg.dst, "tcs", None)
-                if zone_idx and msg_dst_tcs and hasattr(msg_dst_tcs, "zone_by_idx"):
-                    if zone := msg_dst_tcs.zone_by_idx.get(zone_idx):
-                        zone._handle_msg(msg)
-
-        # elif msg.code not in (Code._10E0, Code._22D0):
-        #     print("xxx")
-        # "0008|FA/FC", "22C9|array", "22D0|none", "3150|ZZ/array(/FC?)"
 
     # TODO: should be a private method
     def get_circuit(

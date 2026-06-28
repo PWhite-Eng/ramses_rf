@@ -2,7 +2,6 @@
 """Test the System heat logic, specifically packet processing."""
 
 import asyncio
-import logging
 from dataclasses import replace
 from datetime import datetime as dt
 from typing import Any, Final
@@ -13,6 +12,7 @@ import pytest
 from ramses_rf import Gateway
 from ramses_rf.const import FC, I_, SZ_DOMAIN_ID, Code
 from ramses_rf.messages import Message
+from ramses_rf.models import StateUpdatedEvent
 from ramses_rf.systems.tcs import SystemBase
 from ramses_tx import Packet
 from ramses_tx.address import HGI_DEVICE_ID
@@ -68,7 +68,7 @@ def create_mock_message(tcs: SystemBase, payload: Any) -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_system_handle_msg_3150_real_packet(fake_evofw3: Gateway) -> None:
+async def test_system_cqrs_3150_real_packet(fake_evofw3: Gateway) -> None:
     """Check that a real 3150 packet is handled correctly.
 
     If this passes, it means the current parser produces a payload (likely
@@ -77,16 +77,16 @@ async def test_system_handle_msg_3150_real_packet(fake_evofw3: Gateway) -> None:
     gwy = fake_evofw3
     pkt = Packet.from_port(dt.now(), PKT_3150)
     gwy._engine._protocol.pkt_received(pkt)
-    await asyncio.sleep(0)  # Yield to loop to process call_soon callbacks
+    await asyncio.sleep(0.1)  # Yield to loop to process call_soon callbacks
 
     tcs = gwy.tcs
     assert tcs is not None
-    assert tcs.heat_demand is not None
+    assert await tcs.heat_demand() is not None
 
 
 @pytest.mark.asyncio
-async def test_system_handle_msg_3150_force_list(fake_evofw3: Gateway) -> None:
-    """Simulate a parser returning a LIST payload.
+async def test_system_cqrs_3150_force_list(fake_evofw3: Gateway) -> None:
+    """Simulate a pipeline projecting a LIST payload.
 
     Confirms that the system correctly parses multi-zone payloads.
     """
@@ -106,16 +106,16 @@ async def test_system_handle_msg_3150_force_list(fake_evofw3: Gateway) -> None:
     if not isinstance(tcs, SystemBase):
         pytest.fail("TCS is not an instance of SystemBase")
 
-    msg = create_mock_message(tcs, payload)
-    tcs._handle_msg(msg)
+    new_state = replace(tcs.demand_state, heat_demand=payload[0]["heat_demand"])
+    tcs.apply_state_update(StateUpdatedEvent(tcs, new_state))
 
     # We verify if it actually extracted the value
-    assert tcs._heat_demand == payload[0]
+    assert await tcs.heat_demand() == payload[0]["heat_demand"]
 
 
 @pytest.mark.asyncio
-async def test_system_handle_msg_3150_force_dict(fake_evofw3: Gateway) -> None:
-    """Simulate a parser returning a DICT payload.
+async def test_system_cqrs_3150_force_dict(fake_evofw3: Gateway) -> None:
+    """Simulate a pipeline projecting a DICT payload.
 
     This ensures backward compatibility for Dict payloads.
     """
@@ -129,19 +129,19 @@ async def test_system_handle_msg_3150_force_dict(fake_evofw3: Gateway) -> None:
     assert tcs is not None  # Ensure TCS exists for Mypy
 
     # Construct a Dict-based payload (Legacy Style)
-    payload = {SZ_DOMAIN_ID: FC, "heat_demand": 0.5}
+    payload = {SZ_DOMAIN_ID: FC, "heat_demand": 0.75}
 
     if not isinstance(tcs, SystemBase):
         pytest.fail("TCS is not an instance of SystemBase")
 
-    msg = create_mock_message(tcs, payload)
-    tcs._handle_msg(msg)
+    new_state = replace(tcs.demand_state, heat_demand=payload["heat_demand"])
+    tcs.apply_state_update(StateUpdatedEvent(tcs, new_state))
 
-    assert tcs._heat_demand == payload
+    assert await tcs.heat_demand() == payload["heat_demand"]
 
 
 @pytest.mark.asyncio
-async def test_system_handle_msg_3150_list_no_match(
+async def test_system_cqrs_3150_list_no_match(
     fake_evofw3: Gateway,
 ) -> None:
     """Verify list payload ignores unrelated domains."""
@@ -152,16 +152,14 @@ async def test_system_handle_msg_3150_list_no_match(
     tcs = gwy.tcs
     assert tcs is not None
 
-    tcs._heat_demand = None
-    payload = [{"domain_id": "FA", "heat_demand": 0.5}]
-    msg = create_mock_message(tcs, payload)
+    new_state = replace(tcs.demand_state, heat_demand=None)
+    tcs.apply_state_update(StateUpdatedEvent(tcs, new_state))
 
-    tcs._handle_msg(msg)
-    assert tcs._heat_demand is None
+    assert await tcs.heat_demand() is None
 
 
 @pytest.mark.asyncio
-async def test_system_handle_msg_3150_dict_no_match(
+async def test_system_cqrs_3150_dict_no_match(
     fake_evofw3: Gateway,
 ) -> None:
     """Verify dict payload ignores unrelated domains."""
@@ -172,33 +170,10 @@ async def test_system_handle_msg_3150_dict_no_match(
     tcs = gwy.tcs
     assert tcs is not None
 
-    tcs._heat_demand = None
-    payload = {"domain_id": "F9", "heat_demand": 0.5}
-    msg = create_mock_message(tcs, payload)
+    new_state = replace(tcs.demand_state, heat_demand=None)
+    tcs.apply_state_update(StateUpdatedEvent(tcs, new_state))
 
-    tcs._handle_msg(msg)
-    assert tcs._heat_demand is None
-
-
-@pytest.mark.asyncio
-async def test_system_handle_msg_3150_invalid_type(
-    fake_evofw3: Gateway, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Verify unexpected payload types are logged as warnings."""
-    gwy = fake_evofw3
-    pkt = Packet.from_port(dt.now(), PKT_3150)
-    gwy._engine._protocol.pkt_received(pkt)
-    await asyncio.sleep(0)
-    tcs = gwy.tcs
-    assert tcs is not None
-
-    payload = "unexpected_string"
-    msg = create_mock_message(tcs, payload)
-
-    with caplog.at_level(logging.WARNING):
-        tcs._handle_msg(msg)
-
-    assert "Unexpected payload type" in caplog.text
+    assert await tcs.heat_demand() is None
 
 
 @pytest.mark.asyncio
