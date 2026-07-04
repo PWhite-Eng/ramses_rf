@@ -18,12 +18,13 @@ from ramses_rf.const import (
     SZ_RELAY_DEMAND,
     SZ_SETPOINT,
     SZ_TEMPERATURE,
+    SZ_ZONE_IDX,
     ZON_MODE_MAP,
     ZON_ROLE_MAP,
     DevRole,
     ZoneRole,
 )
-from ramses_rf.devices import BdrSwitch, Controller, Device, DhwSensor
+from ramses_rf.devices import BdrSwitch, Controller, Device, DhwSensor, TrvActuator
 from ramses_rf.entity import Entity, class_by_attr
 from ramses_rf.helpers import shrink
 from ramses_rf.models import (
